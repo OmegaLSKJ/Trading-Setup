@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Instrument } from '@/lib/types';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { Search, X, TrendingUp, Building2, Layers } from 'lucide-react';
@@ -22,37 +22,15 @@ export const SymbolSearchModal: React.FC = () => {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input on modal open
-  useEffect(() => {
-    if (isSymbolSearchOpen) {
-      setQuery('');
-      setSelectedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
-      fetchResults('');
-    }
-  }, [isSymbolSearchOpen]);
-
-  // Debounced search
-  useEffect(() => {
-    if (!isSymbolSearchOpen) return;
-    const timer = setTimeout(() => {
-      fetchResults(query);
-    }, 200);
-
-    return () => clearTimeout(timer);
-  }, [query, isSymbolSearchOpen]);
-
-  const fetchResults = async (q: string) => {
+  const fetchResults = useCallback(async (q: string) => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`);
       const data = await res.json();
-      let list = (data.success && Array.isArray(data.instruments)) ? data.instruments : [];
-
-      // If user typed a clean US ticker symbol (e.g. AAPL, NVDA, TSLA, SPY, MSFT)
+      const list: Instrument[] = data.success && Array.isArray(data.instruments) ? data.instruments : [];
       const cleanQ = q.trim().toUpperCase();
       if (cleanQ && /^[A-Z]{1,5}$/.test(cleanQ)) {
-        const hasExisting = list.some((i: any) => i.trading_symbol.toUpperCase() === cleanQ);
+        const hasExisting = list.some((item) => item.trading_symbol.toUpperCase() === cleanQ);
         if (!hasExisting) {
           list.unshift({
             instrument_key: `US|${cleanQ}`,
@@ -64,15 +42,36 @@ export const SymbolSearchModal: React.FC = () => {
           });
         }
       }
-
       setResults(list);
       setSelectedIndex(0);
-    } catch (e) {
-      console.error('Failed to search instruments:', e);
+    } catch (error) {
+      console.error('Failed to search instruments:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  // Focus input on modal open
+  useEffect(() => {
+    if (isSymbolSearchOpen) {
+      const resetTimer = setTimeout(() => {
+        setQuery('');
+        setSelectedIndex(0);
+        inputRef.current?.focus();
+      }, 0);
+      return () => clearTimeout(resetTimer);
+    }
+  }, [isSymbolSearchOpen, fetchResults]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!isSymbolSearchOpen) return;
+    const timer = setTimeout(() => {
+      void fetchResults(query);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [query, isSymbolSearchOpen, fetchResults]);
 
   const filteredResults = results.filter((item) => {
     if (filterSegment === 'ALL') return true;

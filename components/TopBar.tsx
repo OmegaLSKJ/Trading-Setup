@@ -15,7 +15,6 @@ import {
   Layers,
   ChevronDown,
   Target,
-  History,
   Globe,
 } from 'lucide-react';
 import { TIMEZONE_OPTIONS, getTimezoneOption } from '@/lib/timezones';
@@ -46,18 +45,11 @@ export const TopBar: React.FC = () => {
     connectionStatus,
     connectionDetails,
     setConnectionStatus,
-    setTradesModalOpen,
-    symbolTrades,
     selectedTimezone,
     setTimezone,
   } = useDashboardStore();
 
   const isStrategyActive = charts.some((c) => c.indicators.strategy);
-
-  const totalRecordedTrades = Object.values(symbolTrades).reduce(
-    (acc, t) => acc + t.length,
-    0
-  );
 
   const [isLayoutDropdownOpen, setIsLayoutDropdownOpen] = useState(false);
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
@@ -89,22 +81,6 @@ export const TopBar: React.FC = () => {
     const interval = setInterval(checkHealth, 30000);
     return () => clearInterval(interval);
   }, [setConnectionStatus]);
-
-  const getStatusColor = () => {
-    switch (connectionStatus) {
-      case 'CONNECTED':
-        return 'bg-emerald-500 text-emerald-400 border-emerald-500/30';
-      case 'FETCHING':
-        return 'bg-cyan-500 text-cyan-400 border-cyan-500/30';
-      case 'RATE_LIMITED':
-        return 'bg-amber-500 text-amber-400 border-amber-500/30';
-      case 'TOKEN_ERROR':
-        return 'bg-rose-500 text-rose-400 border-rose-500/30';
-      case 'OFFLINE':
-      default:
-        return 'bg-slate-500 text-slate-400 border-slate-500/30';
-    }
-  };
 
   return (
     <header className="h-12 w-full bg-[#0b0f19] border-b border-slate-800 flex items-center justify-between px-3 shrink-0 select-none z-30">

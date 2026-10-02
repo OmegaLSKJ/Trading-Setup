@@ -3,6 +3,10 @@ import { Candle, Timeframe } from './types';
 
 const UPSTOX_BASE_URL = 'https://api.upstox.com/v3';
 
+function apiError(message: string, status: number, retryAfter?: number): Error & { status: number; retryAfter?: number } {
+  return Object.assign(new Error(message), { status, ...(retryAfter === undefined ? {} : { retryAfter }) });
+}
+
 // Server-side helper to get token
 export function getUpstoxToken(): string | undefined {
   const token = process.env.UPSTOX_TOKEN;
@@ -208,16 +212,11 @@ async function fetchHistoricalChunk(
     if (res.status === 429) {
       const retryAfterHeader = res.headers.get('Retry-After');
       const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
-      const error: any = new Error('Upstox API rate limit reached');
-      error.status = 429;
-      error.retryAfter = retryAfter;
-      throw error;
+      throw apiError('Upstox API rate limit reached', 429, retryAfter);
     }
 
     if (res.status === 401 || res.status === 403) {
-      const error: any = new Error('Upstox token invalid or unauthorized');
-      error.status = res.status;
-      throw error;
+      throw apiError('Upstox token invalid or unauthorized', res.status);
     }
 
     if (!res.ok) {
@@ -231,9 +230,7 @@ async function fetchHistoricalChunk(
       } catch {
         // use default message
       }
-      const error: any = new Error(errorMsg);
-      error.status = res.status;
-      throw error;
+      throw apiError(errorMsg, res.status);
     }
 
     const data: UpstoxCandleResponse = await res.json();
@@ -269,9 +266,7 @@ async function fetchIntraday(
     const res = await fetch(url, { headers });
 
     if (res.status === 429) {
-      const error: any = new Error('Upstox API rate limit reached');
-      error.status = 429;
-      throw error;
+      throw apiError('Upstox API rate limit reached', 429);
     }
 
     if (!res.ok) {
@@ -319,10 +314,12 @@ export async function fetchCandleRange(
         chunk.from
       );
       rawCandles.push(...chunkCandles);
-    } catch (err: any) {
-      console.warn(`Failed fetching chunk ${chunk.from} to ${chunk.to} for ${instrumentKey}:`, err.message);
+    } catch (err: unknown) {
+      const status = typeof err === 'object' && err !== null && 'status' in err ? err.status : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`Failed fetching chunk ${chunk.from} to ${chunk.to} for ${instrumentKey}:`, message);
       // If single chunk fails due to no data on holidays, continue to next chunk
-      if (err.status !== 401 && err.status !== 429) {
+      if (status !== 401 && status !== 429) {
         continue;
       }
       throw err;

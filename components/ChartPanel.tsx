@@ -45,6 +45,7 @@ const DATE_PRESETS: { label: string; value: DateRangePreset }[] = [
 
 export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const chartRef = useRef<CandlestickChartHandle>(null);
+  const navigatedToastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -84,21 +85,25 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
     ) {
       const timeToScroll = targetTradeNavigation.time;
       const tradeId = targetTradeNavigation.id;
-      setNavigatedTradeToast(`Navigated to ${tradeId} (${panel.instrument.trading_symbol})`);
+      setTimeout(() => {
+        setNavigatedTradeToast(`Navigated to ${tradeId} (${panel.instrument.trading_symbol})`);
+        if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);
+        navigatedToastTimerRef.current = setTimeout(() => setNavigatedTradeToast(null), 3800);
+      }, 0);
 
       // Scroll after chart canvas has rendered and retry to ensure candle alignment
       const delays = [80, 250, 600];
-      delays.forEach((delay) => {
-        setTimeout(() => {
+      delays.forEach((delay) => setTimeout(() => {
           chartRef.current?.scrollToTime(timeToScroll);
-        }, delay);
-      });
+        }, delay));
 
       clearTradeNavigation();
-      const timer = setTimeout(() => setNavigatedTradeToast(null), 3800);
-      return () => clearTimeout(timer);
     }
   }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation, candles]);
+
+  useEffect(() => () => {
+    if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);
+  }, []);
 
   const handleStrategyUpdate = useCallback(
     (summary: StrategySummary) => {
@@ -145,17 +150,19 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
         setLiveChange(change);
         setLiveChangePercent(first.open > 0 ? (change / first.open) * 100 : 0);
       }
-    } catch (err: any) {
-      console.warn(`Chart panel error [${panel.instrument.trading_symbol}]:`, err.message);
-      setErrorMessage(err.message || 'Error fetching Upstox data');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error fetching market data';
+      console.warn(`Chart panel error [${panel.instrument.trading_symbol}]:`, message);
+      setErrorMessage(message);
     } finally {
       setIsLoading(false);
     }
-  }, [panel.instrument.instrument_key, panel.timeframe, panel.dateRangePreset, panel.customFrom, panel.customTo]);
+  }, [panel.instrument.instrument_key, panel.instrument.trading_symbol, panel.timeframe, panel.dateRangePreset, panel.customFrom, panel.customTo]);
 
   // Initial load and dependency updates
   useEffect(() => {
-    loadCandles();
+    const timer = setTimeout(() => void loadCandles(), 0);
+    return () => clearTimeout(timer);
   }, [loadCandles, globalRefreshTrigger]);
 
   // Auto-refresh polling timer

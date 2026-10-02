@@ -9,7 +9,7 @@ Designed strictly for market data visualization, multi-timeframe technical analy
 ## Key Features
 
 - **Multi-Chart Grid Layouts**: 1 Chart, 2 Charts (Horizontal / Vertical), 4-Chart Grid (2×2), 6-Chart Grid, and 8-Chart Grid.
-- **Upstox V3 Direct Feed**: Direct server-side streaming of historical candles and intraday candles with zero token leakage to the client.
+- **Upstox V3 Market Data**: Server-side historical and intraday candle requests, with live quotes relayed to the browser and zero token leakage to the client.
 - **Instrument Master & Instant Search**: Pre-seeded with top NSE symbols (NIFTY 50, BANK NIFTY, RELIANCE, TCS, HDFCBANK, INFY, etc.) and backed by automated background caching of all 74,000+ Indian instruments from Upstox master files.
 - **Multi-Timeframe Controls**: Independent timeframe selection per chart (`1m`, `3m`, `5m`, `10m`, `15m`, `30m`, `1h`, `1D`) with optional global timeframe synchronization.
 - **Date Range Presets & Auto-Pagination**: Presets for `Today`, `5D`, `1M`, `3M`, `6M`, `YTD`, `1Y`, and `Custom`. Automatically splits multi-month minute candle queries into valid Upstox date chunks, deduplicating and sorting chronologically.
@@ -27,6 +27,8 @@ Designed strictly for market data visualization, multi-timeframe technical analy
   - Named layout manager (e.g. "Banking", "Index Monitor") persisted in browser `localStorage`
   - Restores your exact workspace configuration on restart
 - **Connection Status HUD**: Live connection indicator displaying server ping latency, status, and indexed instrument counts.
+
+Live chart updates use observed Upstox quotes during Indian market hours and Yahoo Finance quote updates for US instruments. The dashboard does not invent after-hours prices or trade volume; when a provider has no new quote, the latest chart data remains unchanged. US 3-minute and 10-minute candles are aggregated from provider 1-minute and 5-minute bars respectively, subject to provider history limits.
 
 ---
 

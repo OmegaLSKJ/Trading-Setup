@@ -14,6 +14,8 @@ import {
   LineStyle,
   PriceLineSource,
   Time,
+  IPriceLine,
+  ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
 import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
 import {
@@ -28,9 +30,9 @@ import {
 import { chartSyncBus } from '@/lib/chart-sync';
 import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
-import { liveStreamManager, LiveTick } from '@/lib/live-stream';
+import { liveStreamManager } from '@/lib/live-stream';
 import { getIndianMarketStatus } from '@/lib/market-hours';
-import { formatDateTimeWithZone, getTimezoneShortLabel, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
+import { formatDateTimeWithZone, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
@@ -78,8 +80,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const emaSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-    const rsiPriceLinesRef = useRef<any[]>([]);
-    const markersPluginRef = useRef<any>(null);
+    const rsiPriceLinesRef = useRef<IPriceLine[]>([]);
+    const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
     // Active indicators snapshot lookup by timestamp for crosshair hover inspection
     const candleIndicatorsMap = useRef<Map<number, LiveIndicatorsSnapshot>>(new Map());
@@ -103,6 +105,12 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     indicatorsRef.current = indicators;
 
     const syncSettings = useDashboardStore((s) => s.syncSettings);
+    const syncSettingsRef = useRef(syncSettings);
+    syncSettingsRef.current = syncSettings;
+    const chartIdRef = useRef(chartId);
+    chartIdRef.current = chartId;
+    const onCrosshairMoveRef = useRef(onCrosshairMove);
+    onCrosshairMoveRef.current = onCrosshairMove;
     const selectedTimezone = useDashboardStore((s) => s.selectedTimezone) || DEFAULT_TIMEZONE;
     const selectedTimezoneRef = useRef(selectedTimezone);
     selectedTimezoneRef.current = selectedTimezone;
@@ -320,7 +328,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
           setHoverData(null);
           setHoverIndicators(null);
-          if (onCrosshairMove) onCrosshairMove(null);
+          onCrosshairMoveRef.current?.(null);
           return;
         }
 
@@ -351,8 +359,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const histSnap = candleIndicatorsMap.current.get(timeNum);
           setHoverIndicators(histSnap || null);
 
-          if (onCrosshairMove) {
-            onCrosshairMove({
+          if (onCrosshairMoveRef.current) {
+            onCrosshairMoveRef.current({
               time: timeNum,
               timeString: timeStr,
               open: candleData.open,
@@ -365,17 +373,17 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
 
         // Sync crosshair across charts
-        if (syncSettings.crosshair) {
-          chartSyncBus.emitCrosshair(chartId, Number(param.time), param.point);
+        if (syncSettingsRef.current.crosshair) {
+          chartSyncBus.emitCrosshair(chartIdRef.current, Number(param.time), param.point);
         }
       });
 
       // Time range change handler for sync
       chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-        if (!logicalRange || isSyncingRange.current || !syncSettings.timeRange) return;
+        if (!logicalRange || isSyncingRange.current || !syncSettingsRef.current.timeRange) return;
         const timeRange = chart.timeScale().getVisibleRange();
         if (timeRange && typeof timeRange.from === 'number' && typeof timeRange.to === 'number') {
-          chartSyncBus.emitTimeRange(chartId, timeRange.from, timeRange.to);
+          chartSyncBus.emitTimeRange(chartIdRef.current, timeRange.from, timeRange.to);
         }
       });
 
@@ -588,7 +596,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             high: newPrice,
             low: newPrice,
             close: newPrice,
-            volume: tick.volumeDelta || 10,
+            volume: tick.volumeDelta,
           };
           list.push(newCandle);
 
@@ -601,7 +609,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
               close: newCandle.close,
             });
 
-            if (volumeSeriesRef.current && indicators.volume) {
+            if (volumeSeriesRef.current && indicatorsRef.current.volume) {
               volumeSeriesRef.current.update({
                 time: barStartTime as unknown as Time,
                 value: newCandle.volume,
@@ -639,7 +647,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             });
 
             // 2. Update Volume Histogram on Canvas
-            if (volumeSeriesRef.current && indicators.volume) {
+            if (volumeSeriesRef.current && indicatorsRef.current.volume) {
               volumeSeriesRef.current.update({
                 time: last.time as unknown as Time,
                 value: last.volume,
