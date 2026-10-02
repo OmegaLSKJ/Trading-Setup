@@ -81,12 +81,9 @@ export function calculateDateChunks(
     while (currentToSec >= fromSec) {
       const currentFromSec = Math.max(fromSec, currentToSec - 364 * 86400);
 
-      const fromDate = new Date(currentFromSec * 1000);
-      const toDate = new Date(currentToSec * 1000);
-
       chunks.push({
-        from: formatDateYYYYMMDD(new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()))),
-        to: formatDateYYYYMMDD(new Date(Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate()))),
+        from: new Date(currentFromSec * 1000).toISOString().slice(0, 10),
+        to: new Date(currentToSec * 1000).toISOString().slice(0, 10),
       });
 
       currentToSec = currentFromSec - 86400;
@@ -103,12 +100,9 @@ export function calculateDateChunks(
   while (currentToSec >= fromSec) {
     const currentFromSec = Math.max(fromSec, currentToSec - maxChunkDays * 86400);
 
-    const fromDate = new Date(currentFromSec * 1000);
-    const toDate = new Date(currentToSec * 1000);
-
     chunks.push({
-      from: formatDateYYYYMMDD(new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()))),
-      to: formatDateYYYYMMDD(new Date(Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate()))),
+      from: new Date(currentFromSec * 1000).toISOString().slice(0, 10),
+      to: new Date(currentToSec * 1000).toISOString().slice(0, 10),
     });
 
     currentToSec = currentFromSec - 86400;

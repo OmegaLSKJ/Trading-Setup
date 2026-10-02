@@ -283,6 +283,8 @@ class InstrumentMasterService {
   private isLoaded = false;
   private isLoading = false;
   private lastLoadTime = 0;
+  private lastFailureTime = 0;
+  private failureCooldownMs = 60 * 1000;
   private initPromise: Promise<void> | null = null;
   private cacheFilePath: string;
 
@@ -325,6 +327,10 @@ class InstrumentMasterService {
     const now = Date.now();
     const isFresh = this.isLoaded && now - this.lastLoadTime < 24 * 60 * 60 * 1000;
     if (isFresh && !forceRefresh) return;
+
+    // Cooldown check after failed download
+    const inCooldown = now - this.lastFailureTime < this.failureCooldownMs;
+    if (inCooldown && !forceRefresh) return;
 
     if (this.initPromise) {
       return this.initPromise;
@@ -404,6 +410,7 @@ class InstrumentMasterService {
           this.atomicReplace(parsed);
           this.isLoaded = true;
           this.lastLoadTime = Date.now();
+          this.lastFailureTime = 0;
 
           // Write cache asynchronously
           try {
@@ -417,6 +424,7 @@ class InstrumentMasterService {
           clearTimeout(timeoutId);
         }
       } catch (err) {
+        this.lastFailureTime = Date.now();
         console.warn('Instrument master initialization fallback to seeded data:', err);
       } finally {
         this.isLoading = false;

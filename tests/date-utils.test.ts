@@ -61,4 +61,15 @@ describe('Date Utilities & Chunk Calculations', () => {
     expect(shortChunks).toEqual([{ from: '2024-05-01', to: '2024-05-15' }]);
   });
 
+  it('chunks 1D multi-year date ranges using UTC calendar boundaries', () => {
+    const chunks = calculateDateChunks('2020-01-01', '2022-01-01', '1D');
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0].to).toBe('2022-01-01');
+    expect(chunks[chunks.length - 1].from).toBe('2020-01-01');
+    chunks.forEach((chunk) => {
+      const days = calendarDaysBetween(chunk.from, chunk.to);
+      expect(days).toBeLessThanOrEqual(365);
+      expect(days).toBeGreaterThan(0);
+    });
+  });
 });

@@ -48,7 +48,9 @@ export class RequestQueue {
     this.isProcessing = true;
     Promise.resolve().then(() => {
       this.isProcessing = false;
-      this.processNext();
+      while (this.activeCount < this.maxConcurrency && this.queue.length > 0) {
+        this.processNext();
+      }
     });
   }
 
@@ -62,13 +64,18 @@ export class RequestQueue {
 
     this.activeCount++;
 
-    // Enforce serialized spacing between requests with reservation
+    // Enforce serialized spacing between requests by reserving the slot
     const now = Date.now();
-    const elapsed = now - this.lastRequestTime;
-    if (elapsed < this.minIntervalMs) {
-      await new Promise((r) => setTimeout(r, this.minIntervalMs - elapsed));
+    const scheduledTime = Math.max(now, this.lastRequestTime + this.minIntervalMs);
+    this.lastRequestTime = scheduledTime;
+
+    const waitMs = scheduledTime - now;
+    if (waitMs > 0) {
+      await new Promise((r) => setTimeout(r, waitMs));
     }
-    this.lastRequestTime = Date.now();
+
+    // Allow additional queued tasks to start when concurrency capacity remains available
+    this.scheduleProcessing();
 
     try {
       const result = await task.fn();
@@ -96,24 +103,41 @@ export class RequestQueue {
 
         // Parse Retry-After header if present
         if (!retryAfterSec && err?.headers) {
-          const headerVal =
-            err.headers instanceof Headers
-              ? err.headers.get('retry-after')
-              : (err.headers as Record<string, string>)['retry-after'];
+          let rawHeaderVal: string | null | undefined;
+          if (err.headers instanceof Headers) {
+            rawHeaderVal = err.headers.get('retry-after');
+          } else if (typeof err.headers === 'object' && err.headers !== null) {
+            const record = err.headers as Record<string, unknown>;
+            const key = Object.keys(record).find((k) => k.toLowerCase() === 'retry-after');
+            if (key && typeof record[key] === 'string') {
+              rawHeaderVal = record[key] as string;
+            }
+          }
 
-          if (headerVal) {
-            const parsed = parseInt(headerVal, 10);
-            if (!isNaN(parsed)) {
-              retryAfterSec = parsed;
+          if (rawHeaderVal) {
+            const trimmed = rawHeaderVal.trim();
+            if (/^\d+$/.test(trimmed)) {
+              const parsed = parseInt(trimmed, 10);
+              if (!isNaN(parsed) && parsed >= 0) {
+                retryAfterSec = parsed;
+              }
+            } else {
+              // Try parsing as HTTP-date (RFC 7231 / RFC 9110)
+              const dateMs = Date.parse(trimmed);
+              if (!isNaN(dateMs)) {
+                const diffSec = Math.ceil((dateMs - Date.now()) / 1000);
+                retryAfterSec = Math.max(0, diffSec);
+              }
             }
           }
         }
 
         // Add randomized jitter (50ms - 250ms) to avoid thundering herd
         const jitter = Math.floor(Math.random() * 200) + 50;
-        const delay = isRateLimit
-          ? (retryAfterSec ? retryAfterSec * 1000 : 1500 * (4 - task.retries)) + jitter
-          : 800 * (4 - task.retries) + jitter;
+        const delay =
+          (status === 429 || status === 503) && retryAfterSec !== undefined && retryAfterSec >= 0
+            ? retryAfterSec * 1000 + jitter
+            : (isRateLimit ? 1500 * (4 - task.retries) : 800 * (4 - task.retries)) + jitter;
 
         console.warn(
           `Upstox request retry scheduled: status=${status || 'NETWORK_ERR'}, delay=${delay}ms, retriesLeft=${task.retries - 1}`
