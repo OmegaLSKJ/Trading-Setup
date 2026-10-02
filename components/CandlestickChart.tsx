@@ -482,7 +482,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       if (indicators.strategy && candles && candles.length > 0) {
         try {
-          const summary = evaluateStrategy(candles);
+          const summary = evaluateStrategy(candles, tradingSymbol);
           const chartMarkers = summary.markers.map((m) => ({
             time: m.time as unknown as Time,
             position: m.position,

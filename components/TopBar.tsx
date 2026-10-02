@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   Layers,
   ChevronDown,
+  Target,
 } from 'lucide-react';
 
 const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string }[] = [
@@ -36,6 +37,7 @@ export const TopBar: React.FC = () => {
     setLayoutModalOpen,
     setSettingsModalOpen,
     addChart,
+    applyStrategyToAllCharts,
     connectionStatus,
     connectionDetails,
     setConnectionStatus,
@@ -138,6 +140,20 @@ export const TopBar: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {/* Global Strategy Application for All Stocks */}
+        <button
+          onClick={() => {
+            applyStrategyToAllCharts(true);
+            triggerGlobalRefresh();
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs text-amber-300 font-medium transition-colors cursor-pointer"
+          title="Custom 3-Candle Strategy is active on all stocks. Click to re-apply/enforce on all charts"
+        >
+          <Target className="w-3.5 h-3.5 text-amber-400" />
+          <span className="hidden sm:inline">Strategy:</span>
+          <span className="font-semibold text-emerald-400">All Stocks</span>
+        </button>
 
         {/* Refresh All Charts */}
         <button

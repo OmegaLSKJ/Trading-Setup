@@ -203,33 +203,27 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             </div>
           )}
 
-          {/* Strategy Live Signal Badge */}
-          {panel.indicators.strategy && strategySummary?.lastSignal && (
-            <div
+          {/* Strategy Live Signal Badge - Applied on all stocks */}
+          {panel.indicators.strategy && (
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIsStrategyModalOpen(true);
               }}
-              className="hidden xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono cursor-pointer transition-colors shadow-xs"
-              title="Click to view full strategy rules, backtest win rate & trade signals"
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-[10px] font-mono cursor-pointer transition-colors shadow-xs"
+              title="Custom 3-Candle Strategy: Click to inspect signals, indicator levels & rules"
             >
-              <span className="text-amber-400 font-bold flex items-center gap-1">
-                <Target className="w-3 h-3" />
-                STRATEGY:
-              </span>
-              <span
-                className={`font-bold ${
-                  strategySummary.lastSignal.type === 'BUY'
-                    ? 'text-emerald-400'
-                    : 'text-rose-400'
-                }`}
-              >
-                {strategySummary.lastSignal.type} @ ₹{strategySummary.lastSignal.price.toFixed(1)}
-              </span>
-              <span className="text-emerald-400">TP: ₹{strategySummary.lastSignal.targetPrice.toFixed(1)} (+2%)</span>
-              <span className="text-amber-400">Exit: Green High</span>
-              <span className="text-cyan-400 font-semibold">({strategySummary.winRate}% Win)</span>
-            </div>
+              <Target className="w-3 h-3 text-amber-400 shrink-0" />
+              <span className="text-amber-300 font-bold hidden sm:inline">3-CANDLE:</span>
+              {strategySummary?.lastSignal ? (
+                <span className="text-emerald-400 font-bold">
+                  BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}{strategySummary.lastSignal.price.toFixed(1)}
+                  <span className="hidden md:inline text-cyan-300 ml-1">(TP: +2%)</span>
+                </span>
+              ) : (
+                <span className="text-slate-400">SCANNING</span>
+              )}
+            </button>
           )}
         </div>
 

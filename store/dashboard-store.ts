@@ -135,6 +135,9 @@ interface DashboardState {
 
   // Hydration from LocalStorage
   loadPersistedState: () => void;
+
+  // Global Strategy Application
+  applyStrategyToAllCharts: (enable?: boolean) => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
@@ -219,7 +222,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   updateChartInstrument: (chartId, instrument) => {
     set((state) => {
       const charts = state.charts.map((c) =>
-        c.id === chartId ? { ...c, instrument } : c
+        c.id === chartId
+          ? {
+              ...c,
+              instrument,
+              indicators: {
+                ...c.indicators,
+                strategy: true,
+                ema8: true,
+                ema16: true,
+              },
+            }
+          : c
       );
       persistActiveState(charts, state.layoutMode);
       return { charts };
@@ -496,16 +510,43 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       if (active) {
         const parsed = JSON.parse(active);
         if (parsed.charts && parsed.charts.length > 0) {
+          // Enforce strategy is enabled across all charts
+          const chartsWithStrategy = parsed.charts.map((c: ChartPanelState) => ({
+            ...c,
+            indicators: {
+              ...DEFAULT_INDICATORS,
+              ...(c.indicators || {}),
+              strategy: true,
+              ema8: true,
+              ema16: true,
+            },
+          }));
           set({
-            charts: parsed.charts,
+            charts: chartsWithStrategy,
             layoutMode: parsed.layoutMode || '4',
-            activeChartId: parsed.charts[0].id,
+            activeChartId: chartsWithStrategy[0].id,
           });
         }
       }
     } catch (e) {
       console.warn('Failed loading persisted state from localStorage:', e);
     }
+  },
+
+  applyStrategyToAllCharts: (enable: boolean = true) => {
+    set((state) => {
+      const charts = state.charts.map((c) => ({
+        ...c,
+        indicators: {
+          ...c.indicators,
+          strategy: enable,
+          ema8: enable ? true : c.indicators.ema8,
+          ema16: enable ? true : c.indicators.ema16,
+        },
+      }));
+      persistActiveState(charts, state.layoutMode);
+      return { charts };
+    });
   },
 }));
 
