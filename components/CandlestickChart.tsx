@@ -931,7 +931,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
-              {isUSInstrument ? 'US LIVE' : 'NSE/BSE LIVE'}
+              {isUSInstrument ? 'US LIVE (200ms)' : 'NSE/BSE LIVE (200ms)'}
             </span>
           ) : (
             <span
