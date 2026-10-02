@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { LayoutGridMode, Timeframe } from '@/lib/types';
+import { getIndianMarketStatus } from '@/lib/market-hours';
 import {
   Activity,
   BarChart2,
@@ -227,6 +228,29 @@ export const TopBar: React.FC = () => {
 
       {/* Right Controls: Connection Status & Settings */}
       <div className="flex items-center gap-2">
+        {/* Indian Market Official Session Badge */}
+        {(() => {
+          const status = getIndianMarketStatus();
+          return (
+            <div
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-mono font-medium ${
+                status.isOpen
+                  ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-400'
+                  : 'bg-rose-950/80 border-rose-500/40 text-rose-300'
+              }`}
+              title={`${status.reason} • Current IST: ${status.timeIST}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${status.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span>NSE/BSE: {status.isOpen ? 'OPEN' : 'CLOSED'}</span>
+              {!status.isOpen && (
+                <span className="hidden xl:inline text-slate-400 text-[10px] font-sans">
+                  ({status.reason})
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Connection Status Badge */}
         <div className="relative">
           <button

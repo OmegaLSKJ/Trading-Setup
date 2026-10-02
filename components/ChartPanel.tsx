@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { StrategySummary } from '@/lib/strategy';
 import { StrategyModal } from './StrategyModal';
+import { getIndianMarketStatus } from '@/lib/market-hours';
 
 interface Props {
   panel: ChartPanelState;
@@ -179,7 +180,26 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             {panel.instrument.exchange}
           </span>
 
-          {/* Live Price with flashing tick effect */}
+          {/* Market Status (Live or Closed) */}
+          {(() => {
+            const isUsStock = panel.instrument.instrument_key.startsWith('US|');
+            const indianStatus = getIndianMarketStatus();
+            const isOpen = isUsStock || indianStatus.isOpen;
+            return (
+              <span
+                className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded font-semibold ${
+                  isOpen
+                    ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40'
+                    : 'bg-rose-950/80 text-rose-400 border border-rose-800/40'
+                }`}
+                title={isOpen ? 'Market is currently open' : `Market is closed (${indianStatus.reason})`}
+              >
+                {isOpen ? 'OPEN' : 'CLOSED'}
+              </span>
+            );
+          })()}
+
+          {/* Live Price with authentic closing/LTP */}
           {livePrice !== null && (
             <div
               className={`flex items-center gap-1.5 font-mono text-[11px] whitespace-nowrap px-1.5 py-0.5 rounded transition-colors duration-150 ${
@@ -190,7 +210,10 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                   : ''
               }`}
             >
-              <span className="text-white font-bold">₹{livePrice.toFixed(2)}</span>
+              <span className="text-white font-bold">
+                {panel.instrument.instrument_key.startsWith('US|') ? '$' : '₹'}
+                {livePrice.toFixed(2)}
+              </span>
               <span
                 className={`text-[10px] font-medium ${
                   isPositive ? 'text-emerald-400' : 'text-rose-400'

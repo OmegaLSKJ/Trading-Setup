@@ -21,6 +21,7 @@ import { chartSyncBus } from '@/lib/chart-sync';
 import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { liveStreamManager, LiveTick } from '@/lib/live-stream';
+import { getIndianMarketStatus } from '@/lib/market-hours';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
@@ -71,7 +72,6 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     // Active mutable candles in memory for real-time live ticking
     const activeCandlesRef = useRef<Candle[]>([]);
     const isSyncingRange = useRef(false);
-    const liveTickTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastStrategyRunTimeRef = useRef<number>(0);
     const strategyPendingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -407,85 +407,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       setCurrentLivePrice(last.close);
     }, [candles, indicators.volume]);
 
-    // Real-Time Live Market Movement Engine (sub-second ticks moving the active candle)
-    useEffect(() => {
-      if (liveTickTimerRef.current) {
-        clearInterval(liveTickTimerRef.current);
-        liveTickTimerRef.current = null;
-      }
-
-      if (!candles || candles.length === 0) return;
-
-      // Indian market tick sizes: 0.05 for stocks, 0.5 for indices
-      const isIndex = instrumentKey.includes('INDEX') || tradingSymbol.includes('NIFTY');
-      const tickStep = isIndex ? 0.5 : 0.05;
-
-      liveTickTimerRef.current = setInterval(() => {
-        const list = activeCandlesRef.current;
-        if (!list || list.length === 0 || !candleSeriesRef.current) return;
-
-        const last = list[list.length - 1];
-        if (!last) return;
-
-        // Micro-price change: -2, -1, 0, +1, +2 ticks
-        const steps = Math.floor(Math.random() * 5) - 2;
-        if (steps === 0) return;
-
-        const delta = steps * tickStep;
-        const newPrice = Number(Math.max(1, last.close + delta).toFixed(2));
-        const direction = newPrice > last.close ? 'UP' : 'DOWN';
-
-        // Update active candle in memory
-        last.close = newPrice;
-        if (newPrice > last.high) last.high = newPrice;
-        if (newPrice < last.low) last.low = newPrice;
-        last.volume = (last.volume || 0) + (Math.floor(Math.random() * 80) + 10);
-
-        // Update Lightweight Charts candle series directly in-place
-        candleSeriesRef.current.update({
-          time: last.time as unknown as Time,
-          open: last.open,
-          high: last.high,
-          low: last.low,
-          close: last.close,
-        });
-
-        // Update volume series
-        if (volumeSeriesRef.current && indicators.volume) {
-          volumeSeriesRef.current.update({
-            time: last.time as unknown as Time,
-            value: last.volume,
-            color:
-              last.close >= last.open
-                ? 'rgba(16, 185, 129, 0.4)'
-                : 'rgba(239, 68, 68, 0.4)',
-          });
-        }
-
-        // Update HUD and panel price
-        setCurrentLivePrice(newPrice);
-        setTickDirection(direction);
-
-        if (onLivePriceUpdate && list[0]) {
-          const first = list[0];
-          const change = newPrice - first.open;
-          const changePercent = first.open > 0 ? (change / first.open) * 100 : 0;
-          onLivePriceUpdate(newPrice, change, changePercent, direction);
-        }
-
-        // Live Strategy Evaluation on sub-second micro-tick
-        triggerLiveStrategyEvaluation();
-      }, 150); // Fires every 150ms for live, responsive movement
-
-      return () => {
-        if (liveTickTimerRef.current) {
-          clearInterval(liveTickTimerRef.current);
-          liveTickTimerRef.current = null;
-        }
-      };
-    }, [candles, instrumentKey, tradingSymbol, indicators.volume, onLivePriceUpdate, triggerLiveStrategyEvaluation]);
-
-    // Real-Time Live Market Data Stream Subscription (Upstox SSE Stream)
+    // Real-Time Live Market Data Stream Subscription (Authentic Upstox SSE Stream ONLY)
     useEffect(() => {
       if (!instrumentKey) return;
 
@@ -622,14 +544,21 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden">
         {/* Top-left OHLCV HUD Overlay */}
         <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/95 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-xl">
-          {/* Live pulsing beacon */}
-          <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          {/* Market Status beacon */}
+          {(!instrumentKey.startsWith('US|') && !getIndianMarketStatus().isOpen) ? (
+            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-rose-400 mr-1 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/40">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+              CLOSED
             </span>
-            LIVE
-          </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              LIVE
+            </span>
+          )}
 
           {currentPriceInfo ? (
             <>
