@@ -96,6 +96,7 @@ interface DashboardState {
   // Actions
   setActiveChartId: (id: string) => void;
   setLayoutMode: (mode: LayoutGridMode) => void;
+  openChartForInstrument: (instrument: Instrument) => void;
   updateChartInstrument: (chartId: string, instrument: Instrument) => void;
   updateChartTimeframe: (chartId: string, timeframe: Timeframe) => void;
   updateChartDateRange: (
@@ -282,6 +283,84 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       persistActiveState(updated.charts, mode);
       return updated;
     });
+  },
+
+  openChartForInstrument: (instrument) => {
+    const { charts, activeChartId, layoutMode } = get();
+
+    // 1. Check if an existing chart in the current visible grid already displays this stock
+    const existingChart = charts.find(
+      (c) =>
+        c.instrument.instrument_key.toLowerCase() ===
+          instrument.instrument_key.toLowerCase() ||
+        c.instrument.trading_symbol.toUpperCase() ===
+          instrument.trading_symbol.toUpperCase()
+    );
+
+    if (existingChart) {
+      // Focus and highlight that existing chart panel
+      const isAnyExpanded = charts.some((c) => c.isExpanded);
+      const updatedCharts = isAnyExpanded
+        ? charts.map((c) => ({ ...c, isExpanded: c.id === existingChart.id }))
+        : charts;
+
+      set({
+        charts: updatedCharts,
+        activeChartId: existingChart.id,
+      });
+      persistActiveState(updatedCharts, layoutMode);
+      return;
+    }
+
+    // 2. Determine target chart to update: prefer activeChartId, otherwise first chart
+    let targetId = activeChartId;
+    if (!charts.some((c) => c.id === targetId)) {
+      targetId = charts[0]?.id || '';
+    }
+
+    // If no chart exists at all, create one
+    if (!targetId && charts.length === 0) {
+      const newChart: ChartPanelState = {
+        id: `chart-${Date.now()}`,
+        instrument,
+        timeframe: '5m',
+        dateRangePreset: '5D',
+        indicators: { ...DEFAULT_INDICATORS },
+        isExpanded: false,
+      };
+      set({
+        charts: [newChart],
+        activeChartId: newChart.id,
+      });
+      persistActiveState([newChart], layoutMode);
+      return;
+    }
+
+    // 3. Update the target chart panel with the selected instrument and focus it
+    const isAnyExpanded = charts.some((c) => c.isExpanded);
+    const updatedCharts = charts.map((c) =>
+      c.id === targetId
+        ? {
+            ...c,
+            instrument,
+            isExpanded: isAnyExpanded ? true : c.isExpanded,
+            indicators: {
+              ...c.indicators,
+              strategy: true,
+              ema8: true,
+              ema16: true,
+            },
+          }
+        : isAnyExpanded
+        ? { ...c, isExpanded: false }
+        : c
+    );
+
+    set({
+      charts: updatedCharts,
+      activeChartId: targetId,
+    });
+    persistActiveState(updatedCharts, layoutMode);
   },
 
   updateChartInstrument: (chartId, instrument) => {

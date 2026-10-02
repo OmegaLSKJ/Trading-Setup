@@ -193,6 +193,8 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   return (
     <div
       onClick={() => setActiveChartId(panel.id)}
+      onClickCapture={() => setActiveChartId(panel.id)}
+      onMouseDownCapture={() => setActiveChartId(panel.id)}
       className={`relative flex flex-col h-full w-full bg-[#0b0f19] border transition-all duration-150 overflow-hidden ${
         isActive
           ? 'border-emerald-500/80 shadow-lg shadow-emerald-950/20'
