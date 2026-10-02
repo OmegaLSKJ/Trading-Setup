@@ -156,7 +156,7 @@ export function formatISTTime(unixSec: number, timezone = DEFAULT_TIMEZONE): str
  * - Pyramiding = 999 (Allows sequential entries across all stocks)
  * - Secondary Tier: EMA 8/16 Bullish Momentum confirmation for all stocks
  */
-export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySummary {
+export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: string = DEFAULT_TIMEZONE): StrategySummary {
   const strategyName = 'Custom 3-Candle Buy Strategy - Sequential (C1=-2 C2=-1 C3=0)';
   const description =
     'Sequential 3-Candle Volume Breakout & EMA 8/16 Momentum Strategy applied to all stocks with +2% Target and Green-High tracking exit.';
@@ -326,7 +326,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
           if (trades[pos.tradeIndex]) {
             trades[pos.tradeIndex].status = 'CLOSED';
             trades[pos.tradeIndex].exitTime = candles[i].time;
-            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time, timezone);
             trades[pos.tradeIndex].exitPrice = exitPrice;
             trades[pos.tradeIndex].exitReason = 'Take Profit (+2.0%)';
             trades[pos.tradeIndex].pnlPercent = pnlPercent;
@@ -368,7 +368,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
           if (trades[pos.tradeIndex]) {
             trades[pos.tradeIndex].status = 'CLOSED';
             trades[pos.tradeIndex].exitTime = candles[i].time;
-            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time, timezone);
             trades[pos.tradeIndex].exitPrice = exitPrice;
             trades[pos.tradeIndex].exitReason = 'Green-High Tracker Exit';
             trades[pos.tradeIndex].pnlPercent = pnlPercent;
@@ -406,7 +406,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
           if (trades[pos.tradeIndex]) {
             trades[pos.tradeIndex].status = 'CLOSED';
             trades[pos.tradeIndex].exitTime = candles[i].time;
-            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time, timezone);
             trades[pos.tradeIndex].exitPrice = exitPrice;
             trades[pos.tradeIndex].exitReason = 'Max Hold Invalidation (40 bars)';
             trades[pos.tradeIndex].pnlPercent = pnlPercent;
@@ -515,7 +515,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         tier: '3-CANDLE',
         status: 'OPEN',
         entryTime: candles[c3].time,
-        entryTimeString: formatISTTime(candles[c3].time),
+        entryTimeString: formatISTTime(candles[c3].time, timezone),
         entryPrice,
         targetPrice: tp,
         pnlPercent: 0,

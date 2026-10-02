@@ -30,7 +30,7 @@ import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { liveStreamManager, LiveTick } from '@/lib/live-stream';
 import { getIndianMarketStatus } from '@/lib/market-hours';
-import { formatDateTimeWithZone, getTimezoneShortLabel, DEFAULT_TIMEZONE } from '@/lib/timezones';
+import { formatDateTimeWithZone, getTimezoneShortLabel, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
@@ -104,6 +104,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     const syncSettings = useDashboardStore((s) => s.syncSettings);
     const selectedTimezone = useDashboardStore((s) => s.selectedTimezone) || DEFAULT_TIMEZONE;
+    const selectedTimezoneRef = useRef(selectedTimezone);
+    selectedTimezoneRef.current = selectedTimezone;
 
     useImperativeHandle(ref, () => ({
       resetScale: () => {
@@ -148,6 +150,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       close?: number;
       volume?: number;
       timeStr?: string;
+      time?: number;
     } | null>(null);
 
     const [currentLivePrice, setCurrentLivePrice] = useState<number | null>(null);
@@ -161,7 +164,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       if (currentIndicators.strategy && list && list.length >= 15) {
         try {
-          const summary = evaluateStrategy(list, tradingSymbol);
+          const summary = evaluateStrategy(list, tradingSymbol, selectedTimezone);
           const chartMarkers = summary.markers.map((m) => ({
             time: m.time as unknown as Time,
             position: m.position,
@@ -199,7 +202,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           });
         }
       }
-    }, [tradingSymbol]);
+    }, [tradingSymbol, selectedTimezone]);
 
     const triggerLiveStrategyEvaluation = useCallback(() => {
       const now = Date.now();
@@ -261,7 +264,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           locale: 'en-US',
           dateFormat: 'dd MMM yyyy',
           timeFormatter: (time: number) => {
-            return formatDateTimeWithZone(time, selectedTimezone);
+            return formatDateTimeWithZone(time, selectedTimezoneRef.current);
           },
         },
         timeScale: {
@@ -272,33 +275,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           barSpacing: 10,
           minBarSpacing: 3,
           tickMarkFormatter: (time: number, tickMarkType: number) => {
-            const date = new Date(time * 1000);
-            const tz = selectedTimezone;
-            if (tickMarkType === 0) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                year: 'numeric',
-              });
-            }
-            if (tickMarkType === 1) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                month: 'short',
-              });
-            }
-            if (tickMarkType === 2) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                day: '2-digit',
-                month: 'short',
-              });
-            }
-            return date.toLocaleTimeString('en-US', {
-              timeZone: tz,
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            });
+            return formatTickMark(time, tickMarkType, selectedTimezoneRef.current);
           },
         },
       });
@@ -357,7 +334,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
         if (candleData) {
           const timeNum = Number(param.time);
-          const timeStr = formatDateTimeWithZone(timeNum, selectedTimezone);
+          const currentTz = selectedTimezoneRef.current || DEFAULT_TIMEZONE;
+          const timeStr = formatDateTimeWithZone(timeNum, currentTz);
 
           const currentHover = {
             open: candleData.open,
@@ -366,6 +344,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             close: candleData.close,
             volume: volumeData?.value,
             timeStr,
+            time: timeNum,
           };
           setHoverData(currentHover);
 
@@ -419,10 +398,19 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     // Dynamically reconfigure chart time formatters when selectedTimezone changes
     useEffect(() => {
+      const tz = selectedTimezone || DEFAULT_TIMEZONE;
+
+      // Refresh displayed hover timestamp immediately when timezone changes
+      setHoverData((prev) => {
+        if (!prev || prev.time === undefined) return prev;
+        return {
+          ...prev,
+          timeStr: formatDateTimeWithZone(prev.time, tz),
+        };
+      });
+
       const chart = chartApiRef.current;
       if (!chart) return;
-
-      const tz = selectedTimezone || DEFAULT_TIMEZONE;
 
       chart.applyOptions({
         localization: {
@@ -434,32 +422,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         },
         timeScale: {
           tickMarkFormatter: (time: number, tickMarkType: number) => {
-            const date = new Date(time * 1000);
-            if (tickMarkType === 0) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                year: 'numeric',
-              });
-            }
-            if (tickMarkType === 1) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                month: 'short',
-              });
-            }
-            if (tickMarkType === 2) {
-              return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                day: '2-digit',
-                month: 'short',
-              });
-            }
-            return date.toLocaleTimeString('en-US', {
-              timeZone: tz,
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            });
+            return formatTickMark(time, tickMarkType, tz);
           },
         },
       });

@@ -12,6 +12,7 @@ import {
   ConnectionStatus,
 } from '@/lib/types';
 import { PastTrade } from '@/lib/strategy';
+import { isValidTimezone, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 const DEFAULT_INDICATORS: IndicatorConfig = {
   ema8: true,
@@ -247,11 +248,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     }
   },
 
-  selectedTimezone: 'Asia/Kolkata',
+  selectedTimezone: DEFAULT_TIMEZONE,
   setTimezone: (timezone: string) => {
-    set({ selectedTimezone: timezone });
+    const validTz = isValidTimezone(timezone) ? timezone : DEFAULT_TIMEZONE;
+    set({ selectedTimezone: validTz });
     if (typeof window !== 'undefined') {
-      localStorage.setItem('upstox_timezone', timezone);
+      localStorage.setItem('upstox_timezone', validTz);
     }
   },
 
@@ -678,7 +680,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
       const savedTz = localStorage.getItem('upstox_timezone');
       if (savedTz) {
-        set({ selectedTimezone: savedTz });
+        set({ selectedTimezone: isValidTimezone(savedTz) ? savedTz : DEFAULT_TIMEZONE });
       }
 
       const active = localStorage.getItem('upstox_active_dashboard');

@@ -108,7 +108,29 @@ export function getTimezoneOption(tz: string): TimezoneOption {
   };
 }
 
-export function getTimezoneShortLabel(tz: string): string {
+export function isValidTimezone(tz: string): boolean {
+  if (!tz || typeof tz !== 'string') return false;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getTimezoneShortLabel(tz: string, date: Date = new Date()): string {
+  try {
+    const validTz = isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: validTz,
+      timeZoneName: 'short',
+    });
+    const parts = formatter.formatToParts(date);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    if (tzPart && tzPart.value) return tzPart.value;
+  } catch {
+    // fallback
+  }
   return getTimezoneOption(tz).shortLabel;
 }
 
@@ -118,11 +140,11 @@ export function formatDateTimeWithZone(
   includeSeconds = false
 ): string {
   try {
+    const validTz = isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
     const date = new Date(unixSec * 1000);
-    const shortLabel = getTimezoneShortLabel(tz);
 
-    const formatted = date.toLocaleString('en-US', {
-      timeZone: tz,
+    const formatter = new Intl.DateTimeFormat('en-IN', {
+      timeZone: validTz,
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -130,9 +152,10 @@ export function formatDateTimeWithZone(
       minute: '2-digit',
       second: includeSeconds ? '2-digit' : undefined,
       hour12: true,
+      timeZoneName: 'short',
     });
 
-    return `${formatted} ${shortLabel}`;
+    return formatter.format(date);
   } catch {
     return new Date(unixSec * 1000).toLocaleString();
   }
@@ -144,14 +167,89 @@ export function formatTimeOnlyWithZone(
   hour12 = false
 ): string {
   try {
+    const validTz = isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
     const date = new Date(unixSec * 1000);
     return date.toLocaleTimeString('en-US', {
-      timeZone: tz,
+      timeZone: validTz,
       hour: '2-digit',
       minute: '2-digit',
       hour12,
     });
   } catch {
     return new Date(unixSec * 1000).toLocaleTimeString();
+  }
+}
+
+/**
+ * Formats chart tick marks using date boundaries in the selected timezone
+ * rather than relying on UTC-derived tickMarkType.
+ */
+export function formatTickMark(
+  time: number,
+  tickMarkType: number,
+  tz: string = DEFAULT_TIMEZONE
+): string {
+  try {
+    const validTz = isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
+    const date = new Date(time * 1000);
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: validTz,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hourCycle: 'h23',
+    });
+    const parts = formatter.formatToParts(date);
+    let year = '';
+    let month = 0;
+    let day = 0;
+    let hour = 0;
+    let minute = 0;
+    let second = 0;
+
+    for (const p of parts) {
+      if (p.type === 'year') year = p.value;
+      else if (p.type === 'month') month = parseInt(p.value, 10);
+      else if (p.type === 'day') day = parseInt(p.value, 10);
+      else if (p.type === 'hour') hour = parseInt(p.value, 10);
+      else if (p.type === 'minute') minute = parseInt(p.value, 10);
+      else if (p.type === 'second') second = parseInt(p.value, 10);
+    }
+
+    // Check if the tick marks a date boundary in the selected timezone
+    if (hour === 0 && minute === 0 && second === 0) {
+      if (month === 1 && day === 1) {
+        return year;
+      }
+      if (day === 1) {
+        return date.toLocaleDateString('en-US', { timeZone: validTz, month: 'short' });
+      }
+      return date.toLocaleDateString('en-US', {
+        timeZone: validTz,
+        day: '2-digit',
+        month: 'short',
+      });
+    }
+
+    // When zoomed out to Year / Month scale across multiple days
+    if (tickMarkType === 0) {
+      return year;
+    }
+    if (tickMarkType === 1) {
+      return date.toLocaleDateString('en-US', { timeZone: validTz, month: 'short' });
+    }
+
+    // Otherwise it represents intraday time in the selected timezone
+    return date.toLocaleTimeString('en-US', {
+      timeZone: validTz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return new Date(time * 1000).toLocaleTimeString();
   }
 }
