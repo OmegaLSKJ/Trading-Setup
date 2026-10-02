@@ -51,6 +51,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [partialNotice, setPartialNotice] = useState<string | null>(null);
   const [isIndicatorsMenuOpen, setIsIndicatorsMenuOpen] = useState(false);
   const [isDateMenuOpen, setIsDateMenuOpen] = useState(false);
+  const [isTimeframeMenuOpen, setIsTimeframeMenuOpen] = useState(false);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
 
   // Real-time live price states with flashing effects
@@ -275,7 +276,12 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
   return (
     <div
-      onClick={() => setActiveChartId(panel.id)}
+      onClick={() => {
+        setActiveChartId(panel.id);
+        setIsTimeframeMenuOpen(false);
+        setIsDateMenuOpen(false);
+        setIsIndicatorsMenuOpen(false);
+      }}
       onClickCapture={() => setActiveChartId(panel.id)}
       onMouseDownCapture={() => setActiveChartId(panel.id)}
       className={`relative flex flex-col h-full w-full bg-[#0b0f19] border transition-all duration-150 overflow-hidden ${
@@ -285,24 +291,24 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       }`}
     >
       {/* Top Chart Toolbar */}
-      <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#0f172a] border-b border-slate-800/80 gap-2 shrink-0 select-none text-xs">
+      <div className="flex items-center justify-between px-2 py-1 bg-[#0f172a] border-b border-slate-800/80 gap-1.5 shrink-0 select-none text-xs min-h-[34px] overflow-hidden">
         {/* Symbol and price info */}
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 shrink">
           <button
             onClick={(e) => {
               e.stopPropagation();
               openSymbolSearch(panel.id);
             }}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-800/70 hover:bg-slate-700 text-white font-semibold tracking-wide transition-colors group cursor-pointer"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/70 hover:bg-slate-700 text-white font-semibold tracking-wide transition-colors group cursor-pointer shrink-0"
             title="Click to change symbol"
           >
-            <span className="truncate max-w-[110px]">
+            <span className="truncate max-w-[85px] sm:max-w-[110px]">
               {panel.instrument.trading_symbol}
             </span>
-            <Search className="w-3 h-3 text-slate-400 group-hover:text-emerald-400" />
+            <Search className="w-2.5 h-2.5 text-slate-400 group-hover:text-emerald-400" />
           </button>
 
-          <span className="text-[10px] uppercase font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400">
+          <span className="text-[9px] uppercase font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400 shrink-0">
             {panel.instrument.exchange}
           </span>
 
@@ -313,7 +319,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             const isOpen = isUsStock || indianStatus.isOpen;
             return (
               <span
-                className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded font-semibold ${
+                className={`text-[8.5px] uppercase font-mono px-1 py-0.2 rounded font-semibold shrink-0 hidden sm:inline ${
                   isOpen
                     ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40'
                     : 'bg-rose-950/80 text-rose-400 border border-rose-800/40'
@@ -328,7 +334,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           {/* Live Price with authentic closing/LTP */}
           {livePrice !== null && (
             <div
-              className={`flex items-center gap-1.5 font-mono text-[11px] whitespace-nowrap px-1.5 py-0.5 rounded transition-colors duration-150 ${
+              className={`flex items-center gap-1 font-mono text-[11px] whitespace-nowrap px-1 py-0.2 rounded transition-colors duration-150 shrink-0 ${
                 tickFlash === 'UP'
                   ? 'bg-emerald-900/60 text-emerald-300'
                   : tickFlash === 'DOWN'
@@ -341,129 +347,110 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                 {livePrice.toFixed(2)}
               </span>
               <span
-                className={`text-[10px] font-medium ${
+                className={`text-[9.5px] font-medium hidden xs:inline ${
                   isPositive ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
                 {isPositive ? '+' : ''}
-                {liveChange.toFixed(2)} ({isPositive ? '+' : ''}
-                {liveChangePercent.toFixed(2)}%)
+                {liveChangePercent.toFixed(1)}%
               </span>
             </div>
           )}
-
-          {/* Strategy Live Signal Badge & Past Trades Button */}
-          {panel.indicators.strategy && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsStrategyModalOpen(true);
-                }}
-                className={`flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-all shadow-xs ${
-                  strategySummary?.telemetry?.isTakeProfitHit
-                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 animate-pulse'
-                    : strategySummary?.telemetry?.hasOpenPosition
-                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                    : 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
-                }`}
-                title="Custom 3-Candle Strategy: Click to inspect live telemetry & rules"
-              >
-                <Target className="w-3 h-3 text-amber-400 shrink-0" />
-                <span className="text-amber-300 font-bold hidden sm:inline">3-CANDLE:</span>
-                {strategySummary?.telemetry?.isTakeProfitHit ? (
-                  <span className="text-cyan-400 font-bold animate-pulse">🎯 TP +2% HIT!</span>
-                ) : strategySummary?.telemetry?.hasOpenPosition && strategySummary.telemetry.openPositionEntryPrice ? (
-                  <span className="flex items-center gap-1 font-bold">
-                    <span className="text-emerald-400">
-                      BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}
-                      {strategySummary.telemetry.openPositionEntryPrice.toFixed(1)}
-                    </span>
-                    <span
-                      className={`px-1 rounded text-[9px] ${
-                        (strategySummary.telemetry.livePnLPercent ?? 0) >= 0
-                          ? 'bg-emerald-950 text-emerald-300'
-                          : 'bg-rose-950 text-rose-300'
-                      }`}
-                    >
-                      {(strategySummary.telemetry.livePnLPercent ?? 0) >= 0 ? '+' : ''}
-                      {strategySummary.telemetry.livePnLPercent?.toFixed(1)}%
-                    </span>
-                    <span className="hidden md:inline text-cyan-400 font-normal">
-                      (TP: +2%)
-                    </span>
-                  </span>
-                ) : strategySummary?.lastSignal ? (
-                  <span className="text-emerald-400 font-bold">
-                    BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}
-                    {strategySummary.lastSignal.price.toFixed(1)}
-                    <span className="hidden md:inline text-cyan-300 ml-1">(TP: +2%)</span>
-                  </span>
-                ) : (
-                  <span className="text-slate-400">
-                    SCANNING {strategySummary?.telemetry ? `(RSI ${strategySummary.telemetry.rsi})` : ''}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTradesModalOpen(true, panel.instrument.trading_symbol);
-                }}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-[10px] font-mono cursor-pointer transition-all shadow-xs"
-                title={`Inspect all past trades ledger for ${panel.instrument.trading_symbol}`}
-              >
-                <History className="w-3 h-3 text-purple-400 shrink-0" />
-                <span className="font-semibold hidden sm:inline">
-                  {strategySummary?.trades?.length || 0} Trades
-                </span>
-                <span className="font-semibold sm:hidden">
-                  {strategySummary?.trades?.length || 0}T
-                </span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Timeframe Quick Selector */}
-        <div className="flex items-center gap-0.5 bg-slate-900/80 p-0.5 rounded border border-slate-800">
-          {TIMEFRAMES.map((tf) => (
-            <button
-              key={tf}
-              onClick={(e) => {
-                e.stopPropagation();
-                updateChartTimeframe(panel.id, tf);
-              }}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                panel.timeframe === tf
-                  ? 'bg-emerald-600 text-white shadow-xs font-semibold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-              }`}
-            >
-              {tf}
-            </button>
-          ))}
         </div>
 
         {/* Right Toolbar Actions */}
-        <div className="flex items-center gap-1">
-          {/* Strategy Quick Toggle Button */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Timeframe Selector Dropdown (compact, clean, never wraps or overlaps) */}
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsTimeframeMenuOpen(!isTimeframeMenuOpen);
+                setIsDateMenuOpen(false);
+                setIsIndicatorsMenuOpen(false);
+              }}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 font-mono text-[10px] font-bold border border-slate-700/60 cursor-pointer shadow-xs"
+              title="Select timeframe"
+            >
+              <span>{panel.timeframe}</span>
+              <ChevronDown className="w-2.5 h-2.5 text-slate-400" />
+            </button>
+
+            {isTimeframeMenuOpen && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-1 w-20 bg-[#1e293b] border border-slate-700 rounded shadow-2xl z-50 py-1"
+              >
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => {
+                      updateChartTimeframe(panel.id, tf);
+                      setIsTimeframeMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-1 text-[11px] font-mono hover:bg-slate-700 transition-colors ${
+                      panel.timeframe === tf ? 'text-emerald-400 font-bold bg-slate-800' : 'text-slate-300'
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Strategy Unified Button */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              toggleChartIndicator(panel.id, 'strategy');
+              if (panel.indicators.strategy) {
+                setIsStrategyModalOpen(true);
+              } else {
+                toggleChartIndicator(panel.id, 'strategy');
+              }
             }}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
               panel.indicators.strategy
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold'
-                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+                ? strategySummary?.telemetry?.isTakeProfitHit
+                  ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 animate-pulse font-bold'
+                  : strategySummary?.telemetry?.hasOpenPosition
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-bold'
+                  : 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
+                : 'bg-slate-800/60 border-slate-700/40 text-slate-400 hover:text-slate-200'
             }`}
-            title="Toggle Live Strategy Mapping (BUY/SELL Signals & Levels)"
+            title={
+              panel.indicators.strategy
+                ? '3-Candle Strategy: Click to inspect live telemetry & rules'
+                : 'Click to enable 3-Candle Strategy'
+            }
           >
-            <Target className="w-3 h-3 text-amber-400" />
-            <span className="hidden sm:inline">Strategy</span>
+            <Target className="w-3 h-3 text-amber-400 shrink-0" />
+            <span className="hidden sm:inline">
+              {panel.indicators.strategy
+                ? strategySummary?.telemetry?.isTakeProfitHit
+                  ? 'TP +2%!'
+                  : strategySummary?.telemetry?.hasOpenPosition
+                  ? `BUY @ ${strategySummary.telemetry.openPositionEntryPrice?.toFixed(1) || ''}`
+                  : '3-CANDLE'
+                : 'Strategy'}
+            </span>
           </button>
+
+          {/* Past Trades button (visible when strategy is enabled) */}
+          {panel.indicators.strategy && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setTradesModalOpen(true, panel.instrument.trading_symbol);
+              }}
+              className="flex items-center gap-0.5 px-1 py-0.5 rounded border border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-[10px] font-mono cursor-pointer transition-all"
+              title={`Inspect past trades for ${panel.instrument.trading_symbol}`}
+            >
+              <History className="w-2.5 h-2.5 text-purple-400 shrink-0" />
+              <span>{strategySummary?.trades?.length || 0}</span>
+            </button>
+          )}
+
           {/* Date range picker dropdown */}
           <div className="relative">
             <button
@@ -471,12 +458,13 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                 e.stopPropagation();
                 setIsDateMenuOpen(!isDateMenuOpen);
                 setIsIndicatorsMenuOpen(false);
+                setIsTimeframeMenuOpen(false);
               }}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[11px] transition-colors cursor-pointer"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-300 text-[10px] font-mono transition-colors cursor-pointer border border-slate-700/40"
               title="Select date range"
             >
               <span>{panel.dateRangePreset.toUpperCase()}</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
+              <ChevronDown className="w-2.5 h-2.5 text-slate-400" />
             </button>
 
             {isDateMenuOpen && (

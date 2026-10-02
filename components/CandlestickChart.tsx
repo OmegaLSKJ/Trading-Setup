@@ -384,12 +384,15 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
         priceScaleId: 'volume',
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
           top: 0.8,
           bottom: 0,
         },
+        visible: false,
       });
       volumeSeriesRef.current = volumeSeries;
 
@@ -978,7 +981,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
               type: 'custom',
               formatter: (val: number) => val.toFixed(1),
             },
-            lastValueVisible: true,
+            lastValueVisible: false,
             priceLineVisible: false,
           });
 
@@ -988,7 +991,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
               bottom: 0.02,
             },
             autoScale: true,
-            visible: true,
+            visible: false,
             borderColor: '#334155',
           });
 
@@ -997,7 +1000,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             color: 'rgba(239, 68, 68, 0.75)',
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
+            axisLabelVisible: false,
             title: '70 OB',
           });
 
@@ -1006,7 +1009,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             color: 'rgba(16, 185, 129, 0.75)',
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
+            axisLabelVisible: false,
             title: '30 OS',
           });
 
@@ -1079,191 +1082,186 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     return (
       <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden">
-        {/* Top-left OHLCV HUD Overlay */}
-        <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/95 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-xl">
-          {/* Market Status beacon */}
-          {currentMarketStatus.isOpen ? (
-            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-              </span>
-              {isUSInstrument ? 'US LIVE (200ms)' : 'NSE/BSE LIVE (200ms)'}
-            </span>
-          ) : (
-            <span
-              className="flex items-center gap-1.5 text-[10px] font-sans font-semibold text-slate-400 mr-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-700/60"
-              title={currentMarketStatus.reason}
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-slate-500"></span>
-              MARKET CLOSED
-            </span>
-          )}
-
-          {currentPriceInfo ? (
-            <>
-              {currentPriceInfo.timeStr && (
-                <span className="text-slate-400 font-sans mr-1">{currentPriceInfo.timeStr}</span>
-              )}
-              <span>
-                <span className="text-slate-500 font-sans">O:</span>{' '}
-                <span className="text-white font-medium">{currentPriceInfo.open?.toFixed(2)}</span>
-              </span>
-              <span>
-                <span className="text-slate-500 font-sans">H:</span>{' '}
-                <span className="text-emerald-400 font-medium">{currentPriceInfo.high?.toFixed(2)}</span>
-              </span>
-              <span>
-                <span className="text-slate-500 font-sans">L:</span>{' '}
-                <span className="text-rose-400 font-medium">{currentPriceInfo.low?.toFixed(2)}</span>
-              </span>
-              <span>
-                <span className="text-slate-500 font-sans">C:</span>{' '}
-                <span
-                  className={`font-bold transition-colors duration-100 ${
-                    tickDirection === 'UP'
-                      ? 'text-emerald-300'
-                      : tickDirection === 'DOWN'
-                      ? 'text-rose-300'
-                      : (currentPriceInfo.close || 0) >= (currentPriceInfo.open || 0)
-                      ? 'text-emerald-400'
-                      : 'text-rose-400'
-                  }`}
-                >
-                  {currentPriceInfo.close?.toFixed(2)}
+        {/* Top-left Unified HUD Container (Never overlaps) */}
+        <div className="absolute top-1.5 left-2 z-10 flex flex-col gap-1 pointer-events-none max-w-[calc(100%-80px)] select-none">
+          {/* Row 1: OHLCV & Market Beacon */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-[#0b0f19]/85 backdrop-blur-xs px-2 py-0.5 rounded border border-slate-800/70 text-[10px] font-mono text-slate-300 shadow-md">
+            {/* Market Status beacon */}
+            {currentMarketStatus.isOpen ? (
+              <span className="flex items-center gap-1 text-[9px] font-sans font-bold text-emerald-400 bg-emerald-950/70 px-1 py-0.2 rounded border border-emerald-800/40">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                 </span>
+                LIVE
               </span>
-              {currentPriceInfo.volume !== undefined && (
+            ) : (
+              <span
+                className="flex items-center gap-1 text-[9px] font-sans font-semibold text-slate-400 bg-slate-900/90 px-1 py-0.2 rounded border border-slate-700/60"
+                title={currentMarketStatus.reason}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-500"></span>
+                CLOSED
+              </span>
+            )}
+
+            {currentPriceInfo ? (
+              <>
+                {currentPriceInfo.timeStr && (
+                  <span className="text-slate-400 font-sans">{currentPriceInfo.timeStr}</span>
+                )}
                 <span>
-                  <span className="text-slate-500 font-sans">Vol:</span>{' '}
-                  <span className="text-cyan-400">
-                    {currentPriceInfo.volume > 1_000_000
-                      ? `${(currentPriceInfo.volume / 1_000_000).toFixed(2)}M`
-                      : currentPriceInfo.volume > 1_000
-                      ? `${(currentPriceInfo.volume / 1_000).toFixed(1)}K`
-                      : currentPriceInfo.volume.toLocaleString()}
+                  <span className="text-slate-500">O:</span>{' '}
+                  <span className="text-white font-medium">{currentPriceInfo.open?.toFixed(2)}</span>
+                </span>
+                <span>
+                  <span className="text-slate-500">H:</span>{' '}
+                  <span className="text-emerald-400 font-medium">{currentPriceInfo.high?.toFixed(2)}</span>
+                </span>
+                <span>
+                  <span className="text-slate-500">L:</span>{' '}
+                  <span className="text-rose-400 font-medium">{currentPriceInfo.low?.toFixed(2)}</span>
+                </span>
+                <span>
+                  <span className="text-slate-500">C:</span>{' '}
+                  <span
+                    className={`font-bold ${
+                      tickDirection === 'UP'
+                        ? 'text-emerald-300'
+                        : tickDirection === 'DOWN'
+                        ? 'text-rose-300'
+                        : (currentPriceInfo.close || 0) >= (currentPriceInfo.open || 0)
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {currentPriceInfo.close?.toFixed(2)}
                   </span>
                 </span>
-              )}
-            </>
-          ) : (
-            <span className="text-slate-500">Connecting Upstox feed...</span>
-          )}
-        </div>
-
-        {/* Dynamic Live Indicators HUD Ribbon */}
-        {displayIndicators && (
-          <div className="absolute top-9 sm:top-10 left-2 z-10 flex flex-wrap items-center gap-1.5 bg-[#0a0f1d]/90 backdrop-blur-md px-2 py-0.5 rounded border border-slate-800/90 text-[10.5px] font-mono pointer-events-none text-slate-300 shadow-lg">
-            <span className="text-slate-400 font-sans font-bold text-[9px] uppercase tracking-wider mr-0.5">
-              Indicators:
-            </span>
-
-            {/* EMA 8 */}
-            {indicators.ema8 && displayIndicators.ema8 !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-sky-950/60 border border-sky-800/50 text-sky-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block"></span>
-                <span className="font-sans text-sky-400 font-semibold text-[10px]">EMA 8:</span>
-                <span className="font-bold text-white">{displayIndicators.ema8.toFixed(2)}</span>
-              </span>
-            )}
-
-            {/* EMA 16 */}
-            {indicators.ema16 && displayIndicators.ema16 !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-amber-950/60 border border-amber-800/50 text-amber-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
-                <span className="font-sans text-amber-400 font-semibold text-[10px]">EMA 16:</span>
-                <span className="font-bold text-white">{displayIndicators.ema16.toFixed(2)}</span>
-              </span>
-            )}
-
-            {/* Optional EMAs if enabled */}
-            {indicators.ema20 && displayIndicators.ema20 !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-pink-400 inline-block"></span>
-                <span className="font-sans text-pink-400 font-semibold text-[10px]">EMA 20:</span>
-                <span className="font-bold text-white">{displayIndicators.ema20.toFixed(2)}</span>
-              </span>
-            )}
-            {indicators.ema50 && displayIndicators.ema50 !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/50 text-purple-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
-                <span className="font-sans text-purple-400 font-semibold text-[10px]">EMA 50:</span>
-                <span className="font-bold text-white">{displayIndicators.ema50.toFixed(2)}</span>
-              </span>
-            )}
-            {indicators.ema200 && displayIndicators.ema200 !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-yellow-950/60 border border-yellow-800/50 text-yellow-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block"></span>
-                <span className="font-sans text-yellow-400 font-semibold text-[10px]">EMA 200:</span>
-                <span className="font-bold text-white">{displayIndicators.ema200.toFixed(2)}</span>
-              </span>
-            )}
-
-            {/* RSI 14 */}
-            {indicators.rsi14 && displayIndicators.rsi14 !== undefined && (
-              <span
-                className={`flex items-center gap-1 px-1.5 py-0.2 rounded border ${
-                  displayIndicators.rsi14 >= 70 && displayIndicators.rsi14 <= 80
-                    ? 'bg-emerald-950/90 border-emerald-500/70 text-emerald-300 shadow-xs'
-                    : displayIndicators.rsi14 > 80
-                    ? 'bg-rose-950/80 border-rose-500/60 text-rose-300'
-                    : displayIndicators.rsi14 < 30
-                    ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300'
-                    : 'bg-purple-950/60 border-purple-800/40 text-purple-300'
-                }`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
-                <span className="font-sans text-purple-400 font-semibold text-[10px]">RSI 14:</span>
-                <span className="font-bold text-white">{displayIndicators.rsi14.toFixed(1)}</span>
-                {displayIndicators.rsi14 >= 70 && displayIndicators.rsi14 <= 80 && (
-                  <span className="text-[8px] px-1 py-0 rounded font-sans font-bold bg-emerald-900 text-emerald-300 uppercase">
-                    C2 70-80
+                {currentPriceInfo.volume !== undefined && (
+                  <span className="hidden sm:inline">
+                    <span className="text-slate-500">Vol:</span>{' '}
+                    <span className="text-cyan-400">
+                      {currentPriceInfo.volume > 1_000_000
+                        ? `${(currentPriceInfo.volume / 1_000_000).toFixed(2)}M`
+                        : currentPriceInfo.volume > 1_000
+                        ? `${(currentPriceInfo.volume / 1_000).toFixed(1)}K`
+                        : currentPriceInfo.volume.toLocaleString()}
+                    </span>
                   </span>
                 )}
-              </span>
-            )}
-
-            {/* VWAP */}
-            {indicators.vwap && displayIndicators.vwap !== undefined && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950/60 border border-cyan-800/50 text-cyan-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block"></span>
-                <span className="font-sans text-cyan-400 font-semibold text-[10px]">VWAP:</span>
-                <span className="font-bold text-white">{displayIndicators.vwap.toFixed(2)}</span>
-              </span>
-            )}
-
-            {/* Strategy Components: DPO & ADX */}
-            {displayIndicators.dpo !== undefined && (
-              <span className="hidden lg:flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
-                <span className="font-sans text-slate-400 text-[10px]">DPO 20:</span>
-                <span
-                  className={`font-bold ${
-                    displayIndicators.dpo > 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {displayIndicators.dpo > 0 ? '+' : ''}
-                  {displayIndicators.dpo.toFixed(2)}
-                </span>
-              </span>
-            )}
-
-            {displayIndicators.adx !== undefined && displayIndicators.adx > 0 && (
-              <span className="hidden lg:flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
-                <span className="font-sans text-slate-400 text-[10px]">ADX 14:</span>
-                <span
-                  className={`font-bold ${
-                    displayIndicators.adx > 22 ? 'text-amber-400' : 'text-slate-300'
-                  }`}
-                >
-                  {displayIndicators.adx.toFixed(1)}
-                  {displayIndicators.adx > 22 && (
-                    <span className="text-[8px] ml-0.5 text-emerald-400 font-bold">&gt;22</span>
-                  )}
-                </span>
-              </span>
+              </>
+            ) : (
+              <span className="text-slate-500">Loading candles...</span>
             )}
           </div>
-        )}
+
+          {/* Row 2: Indicators Ribbon (Rendered below Row 1, never overlapping) */}
+          {displayIndicators &&
+            Boolean(
+              indicators.ema8 ||
+                indicators.ema16 ||
+                indicators.ema20 ||
+                indicators.ema50 ||
+                indicators.ema200 ||
+                indicators.rsi14 ||
+                indicators.vwap
+            ) && (
+              <div className="flex flex-wrap items-center gap-1 bg-[#0b0f19]/80 backdrop-blur-xs px-2 py-0.5 rounded border border-slate-800/60 text-[9.5px] font-mono text-slate-300 shadow-sm">
+                {/* EMA 8 */}
+                {indicators.ema8 && displayIndicators.ema8 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-sky-950/60 border border-sky-800/40 text-sky-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block"></span>
+                    <span className="text-sky-400 font-sans">EMA 8:</span>
+                    <span className="font-bold text-white">{displayIndicators.ema8.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* EMA 16 */}
+                {indicators.ema16 && displayIndicators.ema16 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-amber-950/60 border border-amber-800/40 text-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                    <span className="text-amber-400 font-sans">EMA 16:</span>
+                    <span className="font-bold text-white">{displayIndicators.ema16.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* EMA 20 */}
+                {indicators.ema20 && displayIndicators.ema20 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-pink-950/60 border border-pink-800/40 text-pink-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 inline-block"></span>
+                    <span className="text-pink-400 font-sans">EMA 20:</span>
+                    <span className="font-bold text-white">{displayIndicators.ema20.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* EMA 50 */}
+                {indicators.ema50 && displayIndicators.ema50 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-purple-950/60 border border-purple-800/40 text-purple-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
+                    <span className="text-purple-400 font-sans">EMA 50:</span>
+                    <span className="font-bold text-white">{displayIndicators.ema50.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* EMA 200 */}
+                {indicators.ema200 && displayIndicators.ema200 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-yellow-950/60 border border-yellow-800/40 text-yellow-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block"></span>
+                    <span className="text-yellow-400 font-sans">EMA 200:</span>
+                    <span className="font-bold text-white">{displayIndicators.ema200.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* RSI 14 */}
+                {indicators.rsi14 && displayIndicators.rsi14 !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-purple-950/60 border border-purple-800/40 text-purple-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
+                    <span className="text-purple-400 font-sans">RSI 14:</span>
+                    <span className="font-bold text-white">{displayIndicators.rsi14.toFixed(1)}</span>
+                  </span>
+                )}
+
+                {/* VWAP */}
+                {indicators.vwap && displayIndicators.vwap !== undefined && (
+                  <span className="flex items-center gap-1 px-1 py-0.2 rounded bg-cyan-950/60 border border-cyan-800/40 text-cyan-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block"></span>
+                    <span className="text-cyan-400 font-sans">VWAP:</span>
+                    <span className="font-bold text-white">{displayIndicators.vwap.toFixed(2)}</span>
+                  </span>
+                )}
+
+                {/* Strategy Telemetry (DPO & ADX) - only shown when strategy indicator is active */}
+                {indicators.strategy && displayIndicators.dpo !== undefined && (
+                  <span className="hidden xl:flex items-center gap-1 px-1 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
+                    <span className="text-slate-400 font-sans">DPO:</span>
+                    <span
+                      className={`font-bold ${
+                        displayIndicators.dpo > 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {displayIndicators.dpo > 0 ? '+' : ''}
+                      {displayIndicators.dpo.toFixed(1)}
+                    </span>
+                  </span>
+                )}
+                {indicators.strategy &&
+                  displayIndicators.adx !== undefined &&
+                  displayIndicators.adx > 0 && (
+                    <span className="hidden xl:flex items-center gap-1 px-1 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
+                      <span className="text-slate-400 font-sans">ADX:</span>
+                      <span
+                        className={`font-bold ${
+                          displayIndicators.adx > 22 ? 'text-amber-400' : 'text-slate-300'
+                        }`}
+                      >
+                        {displayIndicators.adx.toFixed(1)}
+                      </span>
+                    </span>
+                  )}
+              </div>
+            )}
+        </div>
 
         {/* Loading overlay */}
         {isLoading && (
