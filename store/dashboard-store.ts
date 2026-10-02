@@ -80,6 +80,21 @@ const ALLOWED_TIMEFRAMES = new Set<Timeframe>(['1m', '3m', '5m', '10m', '15m', '
 const ALLOWED_DATE_PRESETS = new Set<DateRangePreset>(['today', '5D', '1M', '3M', '6M', 'YTD', '1Y', 'custom']);
 const ALLOWED_REFRESH_INTERVALS = new Set<AutoRefreshInterval>([0, 5000, 10000, 30000, 60000]);
 
+export function getLayoutCapacity(mode: LayoutGridMode): number {
+  switch (mode) {
+    case '1':
+      return 1;
+    case '2h':
+    case '2v':
+      return 2;
+    case '4':
+      return 4;
+    case '6':
+    default:
+      return 6;
+  }
+}
+
 function isValidInstrument(item: unknown): item is Instrument {
   if (!item || typeof item !== 'object') return false;
   const rec = item as Record<string, unknown>;
@@ -154,6 +169,7 @@ interface DashboardState {
   setChartExpanded: (chartId: string, isExpanded: boolean) => void;
   removeChart: (chartId: string) => void;
   addChart: (instrument?: Instrument) => void;
+  fillEmptyGridSlots: () => void;
   setGlobalTimeframe: (timeframe: Timeframe) => void;
   triggerGlobalRefresh: () => void;
 
@@ -331,20 +347,56 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   setLayoutMode: (mode) => {
     if (!ALLOWED_LAYOUT_MODES.has(mode)) return;
-    const currentCharts = get().charts;
-    set({ layoutMode: mode });
+    const { charts, watchlist } = get();
+    const capacity = getLayoutCapacity(mode);
+    const nextCharts = [...charts];
+
+    // If switching to a grid mode with higher capacity than current charts,
+    // auto-populate remaining slots with unopen instruments from watchlist or defaults
+    if (nextCharts.length < capacity) {
+      const openKeys = new Set(nextCharts.map((c) => c.instrument.instrument_key));
+      const openSymbols = new Set(nextCharts.map((c) => c.instrument.trading_symbol.toUpperCase()));
+
+      const availableFromWatchlist = watchlist.filter(
+        (w) => !openKeys.has(w.instrument_key) && !openSymbols.has(w.trading_symbol.toUpperCase())
+      );
+      const availableDefaults = DEFAULT_INSTRUMENTS.filter(
+        (d) => !openKeys.has(d.instrument_key) && !openSymbols.has(d.trading_symbol.toUpperCase())
+      );
+
+      const pool = [...availableFromWatchlist, ...availableDefaults];
+      let poolIdx = 0;
+
+      while (nextCharts.length < capacity && nextCharts.length < 6 && poolIdx < pool.length) {
+        const inst = pool[poolIdx++];
+        openKeys.add(inst.instrument_key);
+        openSymbols.add(inst.trading_symbol.toUpperCase());
+        nextCharts.push({
+          id: `chart-${Date.now()}-${nextCharts.length + 1}`,
+          instrument: inst,
+          timeframe: nextCharts[0]?.timeframe || '5m',
+          dateRangePreset: nextCharts[0]?.dateRangePreset || '5D',
+          indicators: { ...DEFAULT_INDICATORS },
+          isExpanded: false,
+        });
+      }
+    }
+
+    set({ layoutMode: mode, charts: nextCharts });
     safeLocalStorageSet(
       'upstox_active_dashboard',
-      JSON.stringify({ charts: currentCharts, layoutMode: mode })
+      JSON.stringify({ charts: nextCharts, layoutMode: mode })
     );
   },
 
   openChartForInstrument: (instrument) => {
     const { charts, activeChartId, layoutMode } = get();
 
-    // Match instruments by instrument_key
+    // Match instruments by instrument_key or trading_symbol
     const existingIdx = charts.findIndex(
-      (c) => c.instrument.instrument_key === instrument.instrument_key
+      (c) =>
+        c.instrument.instrument_key === instrument.instrument_key ||
+        c.instrument.trading_symbol.toUpperCase() === instrument.trading_symbol.toUpperCase()
     );
 
     if (existingIdx !== -1) {
@@ -353,6 +405,30 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       return;
     }
 
+    const capacity = getLayoutCapacity(layoutMode);
+
+    // If current grid layout has unfilled capacity and charts < 6,
+    // open the instrument in a new grid slot instead of overwriting active chart
+    if (charts.length < capacity && charts.length < 6) {
+      const newChart: ChartPanelState = {
+        id: `chart-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        instrument,
+        timeframe: charts[0]?.timeframe || '5m',
+        dateRangePreset: charts[0]?.dateRangePreset || '5D',
+        indicators: { ...DEFAULT_INDICATORS },
+        isExpanded: false,
+      };
+
+      const updatedCharts = [...charts, newChart];
+      set({ charts: updatedCharts, activeChartId: newChart.id });
+      safeLocalStorageSet(
+        'upstox_active_dashboard',
+        JSON.stringify({ charts: updatedCharts, layoutMode })
+      );
+      return;
+    }
+
+    // When capacity is filled, replace the active chart's instrument
     const targetId = activeChartId || charts[0]?.id;
     const updatedCharts = charts.map((c) =>
       c.id === targetId
@@ -470,17 +546,40 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const { charts, layoutMode, watchlist } = get();
     if (charts.length >= 6) return; // Strict max 6 chart allowance
 
-    const targetInst =
-      instrument ||
-      watchlist[charts.length % watchlist.length] ||
-      DEFAULT_INSTRUMENTS[0];
+    if (instrument) {
+      const existing = charts.find(
+        (c) =>
+          c.instrument.instrument_key === instrument.instrument_key ||
+          c.instrument.trading_symbol.toUpperCase() === instrument.trading_symbol.toUpperCase()
+      );
+      if (existing) {
+        set({ activeChartId: existing.id });
+        return;
+      }
+    }
+
+    let targetInst = instrument;
+    if (!targetInst) {
+      const openKeys = new Set(charts.map((c) => c.instrument.instrument_key));
+      const openSymbols = new Set(charts.map((c) => c.instrument.trading_symbol.toUpperCase()));
+      targetInst =
+        watchlist.find(
+          (w) => !openKeys.has(w.instrument_key) && !openSymbols.has(w.trading_symbol.toUpperCase())
+        ) ||
+        DEFAULT_INSTRUMENTS.find(
+          (d) => !openKeys.has(d.instrument_key) && !openSymbols.has(d.trading_symbol.toUpperCase())
+        ) ||
+        watchlist[charts.length % watchlist.length] ||
+        DEFAULT_INSTRUMENTS[0];
+    }
 
     const newChart: ChartPanelState = {
-      id: `chart-${Date.now()}`,
+      id: `chart-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       instrument: targetInst,
-      timeframe: '5m',
-      dateRangePreset: '5D',
+      timeframe: charts[0]?.timeframe || '5m',
+      dateRangePreset: charts[0]?.dateRangePreset || '5D',
       indicators: { ...DEFAULT_INDICATORS },
+      isExpanded: false,
     };
 
     const nextCharts = [...charts, newChart];
@@ -500,6 +599,46 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     safeLocalStorageSet(
       'upstox_active_dashboard',
       JSON.stringify({ charts: nextCharts, layoutMode: nextLayoutMode })
+    );
+  },
+
+  fillEmptyGridSlots: () => {
+    const { charts, layoutMode, watchlist } = get();
+    const capacity = getLayoutCapacity(layoutMode);
+    if (charts.length >= capacity) return;
+
+    const openKeys = new Set(charts.map((c) => c.instrument.instrument_key));
+    const openSymbols = new Set(charts.map((c) => c.instrument.trading_symbol.toUpperCase()));
+
+    const availableFromWatchlist = watchlist.filter(
+      (w) => !openKeys.has(w.instrument_key) && !openSymbols.has(w.trading_symbol.toUpperCase())
+    );
+    const availableDefaults = DEFAULT_INSTRUMENTS.filter(
+      (d) => !openKeys.has(d.instrument_key) && !openSymbols.has(d.trading_symbol.toUpperCase())
+    );
+
+    const pool = [...availableFromWatchlist, ...availableDefaults];
+    let poolIdx = 0;
+    const nextCharts = [...charts];
+
+    while (nextCharts.length < capacity && nextCharts.length < 6 && poolIdx < pool.length) {
+      const inst = pool[poolIdx++];
+      openKeys.add(inst.instrument_key);
+      openSymbols.add(inst.trading_symbol.toUpperCase());
+      nextCharts.push({
+        id: `chart-${Date.now()}-${nextCharts.length + 1}`,
+        instrument: inst,
+        timeframe: nextCharts[0]?.timeframe || '5m',
+        dateRangePreset: nextCharts[0]?.dateRangePreset || '5D',
+        indicators: { ...DEFAULT_INDICATORS },
+        isExpanded: false,
+      });
+    }
+
+    set({ charts: nextCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: nextCharts, layoutMode })
     );
   },
 
@@ -737,10 +876,52 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             const validMode: LayoutGridMode = ALLOWED_LAYOUT_MODES.has(parsed.layoutMode)
               ? parsed.layoutMode
               : '4';
+
+            const capacity = getLayoutCapacity(validMode);
+            const currentWatchlist = get().watchlist;
+            const finalCharts = [...restoredCharts];
+
+            if (finalCharts.length < capacity) {
+              const openKeys = new Set(finalCharts.map((c) => c.instrument.instrument_key));
+              const openSymbols = new Set(
+                finalCharts.map((c) => c.instrument.trading_symbol.toUpperCase())
+              );
+              const pool = [
+                ...currentWatchlist.filter(
+                  (w) =>
+                    !openKeys.has(w.instrument_key) &&
+                    !openSymbols.has(w.trading_symbol.toUpperCase())
+                ),
+                ...DEFAULT_INSTRUMENTS.filter(
+                  (d) =>
+                    !openKeys.has(d.instrument_key) &&
+                    !openSymbols.has(d.trading_symbol.toUpperCase())
+                ),
+              ];
+              let poolIdx = 0;
+              while (
+                finalCharts.length < capacity &&
+                finalCharts.length < 6 &&
+                poolIdx < pool.length
+              ) {
+                const inst = pool[poolIdx++];
+                openKeys.add(inst.instrument_key);
+                openSymbols.add(inst.trading_symbol.toUpperCase());
+                finalCharts.push({
+                  id: `chart-${Date.now()}-${finalCharts.length + 1}`,
+                  instrument: inst,
+                  timeframe: finalCharts[0]?.timeframe || '5m',
+                  dateRangePreset: finalCharts[0]?.dateRangePreset || '5D',
+                  indicators: { ...DEFAULT_INDICATORS },
+                  isExpanded: false,
+                });
+              }
+            }
+
             set({
-              charts: restoredCharts,
+              charts: finalCharts,
               layoutMode: validMode,
-              activeChartId: restoredCharts[0].id,
+              activeChartId: finalCharts[0].id,
             });
           }
         }

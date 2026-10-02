@@ -11,6 +11,8 @@ export const SymbolSearchModal: React.FC = () => {
   const closeSymbolSearch = useDashboardStore((s) => s.closeSymbolSearch);
   const targetChartForSearch = useDashboardStore((s) => s.targetChartForSearch);
   const updateChartInstrument = useDashboardStore((s) => s.updateChartInstrument);
+  const addChart = useDashboardStore((s) => s.addChart);
+  const openChartForInstrument = useDashboardStore((s) => s.openChartForInstrument);
   const addToWatchlist = useDashboardStore((s) => s.addToWatchlist);
 
   const [query, setQuery] = useState('');
@@ -148,8 +150,12 @@ export const SymbolSearchModal: React.FC = () => {
   });
 
   const handleSelectInstrument = (inst: Instrument) => {
-    if (targetChartForSearch) {
+    if (targetChartForSearch && targetChartForSearch !== 'NEW_CHART') {
       updateChartInstrument(targetChartForSearch, inst);
+    } else if (targetChartForSearch === 'NEW_CHART') {
+      addChart(inst);
+    } else {
+      openChartForInstrument(inst);
     }
     addToWatchlist(inst);
     closeSymbolSearch();

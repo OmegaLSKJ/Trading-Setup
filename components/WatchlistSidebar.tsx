@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useDashboardStore } from '@/store/dashboard-store';
+import { useDashboardStore, getLayoutCapacity } from '@/store/dashboard-store';
 import { Instrument } from '@/lib/types';
 import {
   Bookmark,
@@ -11,6 +11,7 @@ import {
   ChevronRight,
   TrendingUp,
   Search,
+  LayoutGrid,
 } from 'lucide-react';
 
 export const WatchlistSidebar: React.FC = () => {
@@ -19,12 +20,18 @@ export const WatchlistSidebar: React.FC = () => {
     removeFromWatchlist,
     activeChartId,
     charts,
+    layoutMode,
     openChartForInstrument,
+    addChart,
+    fillEmptyGridSlots,
     openSymbolSearch,
   } = useDashboardStore();
 
   const [isOpen, setIsOpen] = useState(true);
   const [filterText, setFilterText] = useState('');
+
+  const capacity = getLayoutCapacity(layoutMode);
+  const emptySlotsCount = Math.max(0, capacity - charts.length);
 
   const filtered = watchlist.filter(
     (item) =>
@@ -97,6 +104,25 @@ export const WatchlistSidebar: React.FC = () => {
             </div>
           </div>
 
+          {/* Empty Grid Slots Indicator & Auto-fill Action */}
+          {emptySlotsCount > 0 && (
+            <div className="flex items-center justify-between px-2.5 py-1.5 bg-emerald-950/40 border-b border-emerald-900/40 text-[10px] text-emerald-300">
+              <div className="flex items-center gap-1 font-mono">
+                <LayoutGrid className="w-3 h-3 text-emerald-400" />
+                <span>
+                  {emptySlotsCount} slot{emptySlotsCount > 1 ? 's' : ''} empty
+                </span>
+              </div>
+              <button
+                onClick={() => fillEmptyGridSlots()}
+                className="px-1.5 py-0.5 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-500/40 font-mono text-[9px] font-semibold transition-colors cursor-pointer"
+                title="Fill all empty grid slots with watchlist symbols"
+              >
+                Fill Grid
+              </button>
+            </div>
+          )}
+
           {/* Watchlist Symbol Items */}
           <div className="flex-1 overflow-y-auto divide-y divide-slate-900/50">
             {filtered.length === 0 && (
@@ -140,7 +166,15 @@ export const WatchlistSidebar: React.FC = () => {
                       ? 'bg-slate-900/60 border-emerald-500/60 hover:bg-slate-800/80 text-slate-200'
                       : 'border-transparent hover:bg-slate-800/60 text-slate-300'
                   }`}
-                  title={`Click or press Enter to open ${item.trading_symbol} chart`}
+                  title={
+                    isCurrentActive
+                      ? `${item.trading_symbol} is currently active`
+                      : isOpenInAnyChart
+                      ? `Focus ${item.trading_symbol} chart`
+                      : charts.length < capacity
+                      ? `Click to add ${item.trading_symbol} into open grid slot (${charts.length + 1}/${capacity})`
+                      : `Click to replace active chart with ${item.trading_symbol}`
+                  }
                 >
                   <div className="min-w-0 pr-1 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -171,6 +205,20 @@ export const WatchlistSidebar: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* Explicit Add to Grid Button on hover */}
+                    {!isOpenInAnyChart && charts.length < 6 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          addChart(item);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-emerald-300 hover:bg-slate-800 rounded transition-all cursor-pointer"
+                        title={`Add ${item.trading_symbol} as new chart in grid (${charts.length + 1}/6)`}
+                      >
+                        <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                      </button>
+                    )}
+
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -181,6 +229,7 @@ export const WatchlistSidebar: React.FC = () => {
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
+
                     <TrendingUp
                       className={`w-3.5 h-3.5 transition-colors ${
                         isCurrentActive

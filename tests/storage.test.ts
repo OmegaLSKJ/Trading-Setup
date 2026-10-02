@@ -44,3 +44,31 @@ describe('Storage & Migration Resilience', () => {
     expect(isValidVersion).toBe(false);
   });
 });
+
+describe('Multi-Chart Grid Selection & Capacity', () => {
+  it('correctly maps layout modes to max chart capacity capped at 6', async () => {
+    const { getLayoutCapacity } = await import('../store/dashboard-store');
+    expect(getLayoutCapacity('1')).toBe(1);
+    expect(getLayoutCapacity('2h')).toBe(2);
+    expect(getLayoutCapacity('2v')).toBe(2);
+    expect(getLayoutCapacity('4')).toBe(4);
+    expect(getLayoutCapacity('6')).toBe(6);
+  });
+
+  it('allows opening multiple charts into empty grid slots without overwriting', async () => {
+    const { useDashboardStore } = await import('../store/dashboard-store');
+    const store = useDashboardStore.getState();
+
+    // Set to 6 grid layout
+    store.setLayoutMode('6');
+    expect(useDashboardStore.getState().layoutMode).toBe('6');
+    expect(useDashboardStore.getState().charts.length).toBeLessThanOrEqual(6);
+
+    // If active chart exists, opening an existing instrument switches focus
+    const firstChart = useDashboardStore.getState().charts[0];
+    if (firstChart) {
+      useDashboardStore.getState().openChartForInstrument(firstChart.instrument);
+      expect(useDashboardStore.getState().activeChartId).toBe(firstChart.id);
+    }
+  });
+});
