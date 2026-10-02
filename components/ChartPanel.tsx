@@ -402,6 +402,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           ref={chartRef}
           chartId={panel.id}
           instrumentKey={panel.instrument.instrument_key}
+          tradingSymbol={panel.instrument.trading_symbol}
           timeframe={panel.timeframe}
           candles={candles}
           indicators={panel.indicators}
