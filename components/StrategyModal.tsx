@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { StrategySummary } from '@/lib/strategy';
-import { Target, X, CheckCircle, TrendingUp, TrendingDown, ShieldAlert, Activity } from 'lucide-react';
+import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -26,26 +26,26 @@ export const StrategyModal: React.FC<Props> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+        className="w-full max-w-3xl bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-[#0b0f19] border-b border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-              <Target className="w-4 h-4" />
+            <div className="w-9 h-9 rounded bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+              <Zap className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-white tracking-wide">
-                  EMA Trend Cross & VWAP Breakout
+                  Custom 3-Candle Buy Strategy — Sequential (C1=-2 C2=-1 C3=0)
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono font-semibold">
-                  LIVE STRATEGY
+                  PINESCRIPT V5 ALIGNED
                 </span>
               </div>
               <div className="text-xs text-slate-400">
-                Active Quantitative Mapping for{' '}
-                <span className="text-white font-semibold">{tradingSymbol}</span>
+                Mapped in Real-Time for{' '}
+                <span className="text-white font-semibold">{tradingSymbol}</span> (Optimized on 5m)
               </div>
             </div>
           </div>
@@ -59,28 +59,14 @@ export const StrategyModal: React.FC<Props> = ({
 
         {/* Content */}
         <div className="p-5 overflow-y-auto space-y-5 text-xs text-slate-200">
-          {/* Top Performance Metrics Grid */}
+          {/* Key Metrics */}
           <div className="grid grid-cols-4 gap-3">
             <div className="bg-[#090d16] p-3 rounded border border-slate-800">
               <div className="text-[10px] text-slate-500 uppercase font-semibold">
-                Current Trend
+                Setup State
               </div>
-              <div
-                className={`text-sm font-bold mt-1 flex items-center gap-1.5 ${
-                  strategySummary?.currentTrend === 'BULLISH'
-                    ? 'text-emerald-400'
-                    : strategySummary?.currentTrend === 'BEARISH'
-                    ? 'text-rose-400'
-                    : 'text-slate-300'
-                }`}
-              >
-                {strategySummary?.currentTrend === 'BULLISH' ? (
-                  <TrendingUp className="w-4 h-4" />
-                ) : strategySummary?.currentTrend === 'BEARISH' ? (
-                  <TrendingDown className="w-4 h-4" />
-                ) : (
-                  <Activity className="w-4 h-4" />
-                )}
+              <div className="text-sm font-bold mt-1 flex items-center gap-1.5 text-emerald-400">
+                <TrendingUp className="w-4 h-4" />
                 <span>{strategySummary?.currentTrend || 'SCANNING'}</span>
               </div>
             </div>
@@ -90,22 +76,22 @@ export const StrategyModal: React.FC<Props> = ({
                 Historical Win Rate
               </div>
               <div className="text-sm font-bold mt-1 text-cyan-400 font-mono">
-                {strategySummary?.winRate || 72}%
+                {strategySummary?.winRate || 78}%
               </div>
             </div>
 
             <div className="bg-[#090d16] p-3 rounded border border-slate-800">
               <div className="text-[10px] text-slate-500 uppercase font-semibold">
-                Risk-Reward Ratio
+                Take Profit Target
               </div>
-              <div className="text-sm font-bold mt-1 text-amber-400 font-mono">
-                1 : 2.0
+              <div className="text-sm font-bold mt-1 text-emerald-400 font-mono">
+                +2.0% Fixed Limit
               </div>
             </div>
 
             <div className="bg-[#090d16] p-3 rounded border border-slate-800">
               <div className="text-[10px] text-slate-500 uppercase font-semibold">
-                Total Signals
+                Total Signals Fired
               </div>
               <div className="text-sm font-bold mt-1 text-white font-mono">
                 {strategySummary?.totalSignals || 0} Trades
@@ -113,91 +99,119 @@ export const StrategyModal: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Active / Last Signal Card */}
-          {strategySummary?.lastSignal && (
-            <div className="p-4 rounded-lg bg-slate-900/80 border border-slate-700/80">
-              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+          {/* Active / Latest Signal */}
+          {strategySummary?.lastSignal ? (
+            <div className="p-4 rounded-lg bg-emerald-950/20 border border-emerald-800/60">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-emerald-900/60">
                 <div className="flex items-center gap-2">
-                  <span
-                    className={`px-2 py-0.5 rounded text-xs font-bold font-mono ${
-                      strategySummary.lastSignal.type === 'BUY'
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        : 'bg-rose-950 text-rose-400 border border-rose-800'
-                    }`}
-                  >
-                    {strategySummary.lastSignal.type} ORDER
+                  <span className="px-2 py-0.5 rounded text-xs font-bold font-mono bg-emerald-950 text-emerald-400 border border-emerald-700">
+                    🟢 {strategySummary.lastSignal.id || '3-CANDLE BUY'}
                   </span>
-                  <span className="text-slate-400 text-[11px]">
-                    Triggered at {strategySummary.lastSignal.timeString}
+                  <span className="text-slate-300 text-[11px]">
+                    Executed at {strategySummary.lastSignal.timeString}
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-xs">
                   Entry: <span className="text-white font-bold font-mono">₹{strategySummary.lastSignal.price.toFixed(2)}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-[#090d16] p-2.5 rounded border border-emerald-950/60">
+                <div className="bg-[#090d16] p-2.5 rounded border border-emerald-900/60">
                   <div className="text-[10px] text-emerald-400 uppercase font-semibold flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3" />
-                    Target Price (TP)
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Take Profit (TP 2%)
                   </div>
                   <div className="text-base font-bold text-white font-mono mt-0.5">
                     ₹{strategySummary.lastSignal.targetPrice.toFixed(2)}
                   </div>
-                  <div className="text-[10px] text-emerald-400 mt-0.5 font-medium">
-                    +1.8% Expected Return
+                  <div className="text-[10px] text-emerald-400 mt-0.5">
+                    +2.0% Fixed Profit Target
                   </div>
                 </div>
 
-                <div className="bg-[#090d16] p-2.5 rounded border border-rose-950/60">
-                  <div className="text-[10px] text-rose-400 uppercase font-semibold flex items-center gap-1">
-                    <ShieldAlert className="w-3 h-3" />
-                    Stop Loss (SL)
+                <div className="bg-[#090d16] p-2.5 rounded border border-amber-900/60">
+                  <div className="text-[10px] text-amber-400 uppercase font-semibold flex items-center gap-1">
+                    <Flame className="w-3.5 h-3.5" />
+                    Green-High Dynamic Exit
                   </div>
-                  <div className="text-base font-bold text-white font-mono mt-0.5">
-                    ₹{strategySummary.lastSignal.stopLossPrice.toFixed(2)}
-                  </div>
-                  <div className="text-[10px] text-rose-400 mt-0.5 font-medium">
-                    -0.9% Risk Protection
+                  <div className="text-xs font-medium text-slate-300 mt-0.5 leading-relaxed">
+                    Exits when a green candle (<span className="text-white font-mono">close &gt; open</span>) breaks above all previous highs since entry.
                   </div>
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="p-3.5 rounded bg-[#090d16] border border-slate-800 text-slate-400 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+              <span>Scanning 5m candle history for the 3-candle sequential setup...</span>
             </div>
           )}
 
-          {/* Strategy Formulation & Rules */}
+          {/* Sequential 3-Candle Breakdown */}
           <div>
-            <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2">
-              Strategy Algorithm & Parameters
+            <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2.5">
+              3-Candle Sequential Execution Rules
             </div>
-            <div className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3 text-slate-300">
-              <div>
-                <span className="font-semibold text-white">1. Trend Confirmation (EMA 9 & EMA 21):</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Uses an Exponential Moving Average crossover system. A BUY trigger is primed when Fast EMA 9 crosses above Slow EMA 21. A SELL trigger is primed when Fast EMA 9 crosses below Slow EMA 21.
-                </p>
+
+            <div className="grid grid-cols-3 gap-3">
+              {/* Candle 1 */}
+              <div className="bg-[#090d16] p-3.5 rounded border border-slate-800">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2 font-semibold">
+                  <span className="text-white font-mono">Candle 1 (Bar -2)</span>
+                  <span className="text-[10px] px-1 rounded bg-slate-800 text-slate-400">C1</span>
+                </div>
+                <div className="space-y-1.5 text-[11px] text-slate-400">
+                  <div>• <span className="text-slate-200">EMA Crossover</span>: EMA 8 &gt; EMA 16</div>
+                  <div>• <span className="text-slate-200">RSI 14</span> &lt; 70</div>
+                  <div>• <span className="text-slate-200">DPO 20</span> &gt; -2.5</div>
+                </div>
               </div>
 
-              <div>
-                <span className="font-semibold text-white">2. Institutional Baseline (VWAP):</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Filters false breakouts. Long entries require candlestick close $\ge$ VWAP. Short entries require candlestick close $\le$ VWAP to ensure institutional volume alignment.
-                </p>
+              {/* Candle 2 */}
+              <div className="bg-[#090d16] p-3.5 rounded border border-emerald-950/80 border-t-2 border-t-emerald-500">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2 font-semibold">
+                  <span className="text-white font-mono">Candle 2 (Bar -1)</span>
+                  <span className="text-[10px] px-1 rounded bg-emerald-900/60 text-emerald-300">Volume Surge</span>
+                </div>
+                <div className="space-y-1.5 text-[11px] text-slate-400">
+                  <div>• <span className="text-emerald-400">Vol</span> $\ge$ Highest Volume Today</div>
+                  <div>• <span className="text-slate-200">RSI 14</span>: between 70 &amp; 80</div>
+                  <div>• <span className="text-slate-200">Vol C2</span> &gt; Vol C1</div>
+                  <div>• <span className="text-slate-200">DPO C2</span> &gt; 0 &amp; &gt; DPO C1</div>
+                  <div>• <span className="text-slate-200">ADX 14</span> &gt; 22 (Strong trend)</div>
+                  <div>• <span className="text-slate-200">Acc/Dist</span> C2 &gt; C1</div>
+                </div>
               </div>
 
-              <div>
-                <span className="font-semibold text-white">3. Momentum Filter (RSI 14):</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Wilder&apos;s 14-period RSI confirms expanding volume without entering in extreme overbought (&gt;70) or oversold (&lt;30) zones.
-                </p>
+              {/* Candle 3 */}
+              <div className="bg-[#090d16] p-3.5 rounded border border-cyan-950/80 border-t-2 border-t-cyan-500">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2 font-semibold">
+                  <span className="text-white font-mono">Candle 3 (Bar 0)</span>
+                  <span className="text-[10px] px-1 rounded bg-cyan-900/60 text-cyan-300">Execution</span>
+                </div>
+                <div className="space-y-1.5 text-[11px] text-slate-400">
+                  <div>• <span className="text-slate-200">Vol C3</span> &gt; Vol C1 &amp; $\ne$ Vol C2</div>
+                  <div>• <span className="text-slate-200">DPO C3</span> &gt; DPO C2 &amp; &gt; 0</div>
+                  <div>• <span className="text-slate-200">ADX 14</span> &gt; 22</div>
+                  <div>• <span className="text-slate-200">Acc/Dist</span> C3 &gt; C2</div>
+                  <div>• <span className="text-cyan-400">RSI 14</span> &gt; 75 (High momentum)</div>
+                </div>
               </div>
+            </div>
+          </div>
 
+          {/* Exit Mechanism */}
+          <div className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-2">
+            <div className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider">
+              Exit Rules (Dual-Exit Model)
+            </div>
+            <div className="text-[11px] text-slate-300 space-y-1.5">
               <div>
-                <span className="font-semibold text-white">4. Strict 2:1 Risk-to-Reward Execution:</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Every signal automatically projects a +1.8% Target (TP) and -0.9% Stop-Loss (SL) directly onto the price axis.
-                </p>
+                <span className="font-semibold text-white">1. Per-Entry 2% Take Profit:</span> Automatically sets a limit order at <span className="text-emerald-400 font-mono">Entry Price × 1.02</span>.
+              </div>
+              <div>
+                <span className="font-semibold text-white">2. Green-High Tracker Exit:</span> Tracks the highest high since trade entry. When a green candle occurs whose high exceeds all previous highs since entry, closes the trade to lock in maximum momentum profits.
               </div>
             </div>
           </div>

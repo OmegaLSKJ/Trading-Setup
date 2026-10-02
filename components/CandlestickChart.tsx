@@ -507,11 +507,15 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
         if (onStrategyUpdate) {
           onStrategyUpdate({
+            name: 'Custom 3-Candle Buy Strategy',
+            description: '',
             currentTrend: 'NEUTRAL',
             lastSignal: null,
             winRate: 0,
             totalSignals: 0,
+            profitableTrades: 0,
             markers: [],
+            activeSignals: [],
           });
         }
       }

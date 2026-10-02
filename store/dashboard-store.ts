@@ -13,13 +13,13 @@ import {
 } from '@/lib/types';
 
 const DEFAULT_INDICATORS: IndicatorConfig = {
-  ema8: false,
-  ema16: false,
-  ema20: true,
-  ema50: true,
+  ema8: true,
+  ema16: true,
+  ema20: false,
+  ema50: false,
   ema200: false,
   rsi14: false,
-  vwap: true,
+  vwap: false,
   volume: true,
   strategy: true,
 };

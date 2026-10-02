@@ -226,8 +226,8 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
               >
                 {strategySummary.lastSignal.type} @ ₹{strategySummary.lastSignal.price.toFixed(1)}
               </span>
-              <span className="text-slate-400">TP: ₹{strategySummary.lastSignal.targetPrice.toFixed(1)}</span>
-              <span className="text-slate-400">SL: ₹{strategySummary.lastSignal.stopLossPrice.toFixed(1)}</span>
+              <span className="text-emerald-400">TP: ₹{strategySummary.lastSignal.targetPrice.toFixed(1)} (+2%)</span>
+              <span className="text-amber-400">Exit: Green High</span>
               <span className="text-cyan-400 font-semibold">({strategySummary.winRate}% Win)</span>
             </div>
           )}
