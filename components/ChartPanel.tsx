@@ -669,7 +669,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       )}
 
       {/* Main Candlestick Chart Canvas */}
-      <div className="flex-1 w-full relative">
+      <div className="flex-1 w-full relative min-h-0">
         {navigatedTradeToast && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-purple-950/95 border border-purple-500/80 text-purple-200 px-3.5 py-1.5 rounded-full text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none animate-bounce">
             <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />

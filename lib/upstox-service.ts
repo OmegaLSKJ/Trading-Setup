@@ -141,14 +141,12 @@ async function fetchHistoricalChunk(
   signal?: AbortSignal
 ): Promise<UpstoxRawCandle[]> {
   const token = getUpstoxToken();
-  if (!token) {
-    throw new UpstoxApiError('Upstox API token is not configured', 401);
-  }
-
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    Authorization: `Bearer ${token}`,
   };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   const encodedKey = encodeURIComponent(instrumentKey);
   const url = `${UPSTOX_BASE_URL}/historical-candle/${encodedKey}/${unit}/${interval}/${toDate}/${fromDate}`;
@@ -227,14 +225,12 @@ async function fetchIntraday(
   signal?: AbortSignal
 ): Promise<UpstoxRawCandle[]> {
   const token = getUpstoxToken();
-  if (!token) {
-    throw new UpstoxApiError('Upstox API token is not configured', 401);
-  }
-
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    Authorization: `Bearer ${token}`,
   };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   const encodedKey = encodeURIComponent(instrumentKey);
   const url = `${UPSTOX_BASE_URL}/historical-candle/intraday/${encodedKey}/${unit}/${interval}`;

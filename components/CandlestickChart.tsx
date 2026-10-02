@@ -1081,7 +1081,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const currentMarketStatus = isUSInstrument ? getUSMarketStatus() : getIndianMarketStatus();
 
     return (
-      <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden">
+      <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden min-h-0">
         {/* Top-left Unified HUD Container (Never overlaps) */}
         <div className="absolute top-1.5 left-2 z-10 flex flex-col gap-1 pointer-events-none max-w-[calc(100%-80px)] select-none">
           {/* Row 1: OHLCV & Market Beacon */}
@@ -1286,7 +1286,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         )}
 
         {/* Chart canvas container */}
-        <div ref={chartContainerRef} className="w-full flex-1" />
+        <div ref={chartContainerRef} className="w-full flex-1 min-h-0" />
       </div>
     );
   }
