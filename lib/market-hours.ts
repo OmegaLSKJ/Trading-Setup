@@ -128,3 +128,65 @@ export function getIndianMarketStatus(date = new Date()): MarketStatus {
   cachedStatus = { time: now, status: resultStatus };
   return resultStatus;
 }
+
+/**
+ * Returns current US market status based on Eastern Time (ET).
+ * Regular hours: Mon-Fri 09:30 - 16:00 ET.
+ */
+export function getUSMarketStatus(date = new Date()): MarketStatus {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || '';
+  const weekday = getPart('weekday');
+  const hour = parseInt(getPart('hour'), 10);
+  const minute = parseInt(getPart('minute'), 10);
+  const timeET = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ET`;
+
+  if (weekday === 'Sat' || weekday === 'Sun') {
+    return {
+      isOpen: false,
+      session: 'CLOSED',
+      exchange: 'NYSE/NASDAQ',
+      reason: 'US Weekend (Saturday/Sunday)',
+      timeIST: timeET,
+    };
+  }
+
+  const minutes = hour * 60 + minute;
+  const openMinutes = 9 * 60 + 30; // 09:30 ET
+  const closeMinutes = 16 * 60; // 16:00 ET
+
+  if (minutes >= openMinutes && minutes < closeMinutes) {
+    return {
+      isOpen: true,
+      session: 'OPEN',
+      exchange: 'NYSE/NASDAQ',
+      reason: 'Regular US Trading Hours (09:30 - 16:00 ET)',
+      timeIST: timeET,
+    };
+  }
+
+  return {
+    isOpen: false,
+    session: 'CLOSED',
+    exchange: 'NYSE/NASDAQ',
+    reason: 'US Market Closed',
+    timeIST: timeET,
+  };
+}
+
+/**
+ * Checks whether the market is open for a given instrument.
+ */
+export function isMarketOpenForInstrument(instrumentKey: string): boolean {
+  if (instrumentKey.startsWith('US|')) {
+    return getUSMarketStatus().isOpen;
+  }
+  return getIndianMarketStatus().isOpen;
+}

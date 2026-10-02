@@ -29,7 +29,7 @@ import { chartSyncBus } from '@/lib/chart-sync';
 import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { liveStreamManager, LiveTick } from '@/lib/live-stream';
-import { getIndianMarketStatus } from '@/lib/market-hours';
+import { getIndianMarketStatus, getUSMarketStatus } from '@/lib/market-hours';
 import { formatDateTimeWithZone, getTimezoneShortLabel, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 export interface CandlestickChartHandle {
@@ -563,6 +563,11 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       };
 
       const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
+        // STRICT RULE: Reject any tick updates when the market for this instrument is closed
+        const isUS = instrumentKey.startsWith('US|');
+        const isMarketOpen = isUS ? getUSMarketStatus().isOpen : getIndianMarketStatus().isOpen;
+        if (!isMarketOpen) return;
+
         const list = activeCandlesRef.current;
         if (!list || list.length === 0 || !candleSeriesRef.current) return;
 
@@ -912,26 +917,29 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     const displayIndicators = hoverIndicators || liveIndicators;
 
+    const isUSInstrument = instrumentKey.startsWith('US|');
+    const currentMarketStatus = isUSInstrument ? getUSMarketStatus() : getIndianMarketStatus();
+
     return (
       <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden">
         {/* Top-left OHLCV HUD Overlay */}
         <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/95 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-xl">
           {/* Market Status beacon */}
-          {(!instrumentKey.startsWith('US|') && !getIndianMarketStatus().isOpen) ? (
+          {currentMarketStatus.isOpen ? (
             <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
-              <span className="relative flex h-2 w-2">
+              <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
-              UPSTOX LIVE (200ms)
+              {isUSInstrument ? 'US LIVE' : 'NSE/BSE LIVE'}
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              LIVE MARKET (200ms)
+            <span
+              className="flex items-center gap-1.5 text-[10px] font-sans font-semibold text-slate-400 mr-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-700/60"
+              title={currentMarketStatus.reason}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-slate-500"></span>
+              MARKET CLOSED
             </span>
           )}
 
