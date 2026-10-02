@@ -202,6 +202,23 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             bottom: 0.22,
           },
         },
+        localization: {
+          locale: 'en-IN',
+          dateFormat: 'dd MMM yyyy',
+          timeFormatter: (time: number) => {
+            const date = new Date(time * 1000);
+            return (
+              date.toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+              }) + ' IST'
+            );
+          },
+        },
         timeScale: {
           borderColor: '#1e293b',
           timeVisible: true,
@@ -209,6 +226,34 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           rightOffset: 8,
           barSpacing: 10,
           minBarSpacing: 3,
+          tickMarkFormatter: (time: number, tickMarkType: number) => {
+            const date = new Date(time * 1000);
+            if (tickMarkType === 0) {
+              return date.toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                year: 'numeric',
+              });
+            }
+            if (tickMarkType === 1) {
+              return date.toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                month: 'short',
+              });
+            }
+            if (tickMarkType === 2) {
+              return date.toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+              });
+            }
+            return date.toLocaleTimeString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            });
+          },
         },
       });
 
@@ -266,15 +311,16 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (candleData) {
           const timeNum = Number(param.time);
           const date = new Date(timeNum * 1000);
-          const timeStr = date.toLocaleString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          });
+          const timeStr =
+            date.toLocaleString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true,
+            }) + ' IST';
 
           const currentHover = {
             open: candleData.open,
@@ -537,7 +583,16 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       low: latestCandle.low,
       close: currentLivePrice ?? latestCandle.close,
       volume: latestCandle.volume,
-      timeStr: latestCandle.timeString,
+      timeStr:
+        new Date(latestCandle.time * 1000).toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        }) + ' IST',
     } : null);
 
     return (
