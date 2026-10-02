@@ -15,6 +15,7 @@ import {
   Layers,
   ChevronDown,
   Target,
+  History,
 } from 'lucide-react';
 
 const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string }[] = [
@@ -42,7 +43,14 @@ export const TopBar: React.FC = () => {
     connectionStatus,
     connectionDetails,
     setConnectionStatus,
+    setTradesModalOpen,
+    symbolTrades,
   } = useDashboardStore();
+
+  const totalRecordedTrades = Object.values(symbolTrades).reduce(
+    (acc, t) => acc + t.length,
+    0
+  );
 
   const [isLayoutDropdownOpen, setIsLayoutDropdownOpen] = useState(false);
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
@@ -154,6 +162,21 @@ export const TopBar: React.FC = () => {
           <Target className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden sm:inline">Strategy:</span>
           <span className="font-semibold text-emerald-400">All Stocks</span>
+        </button>
+
+        {/* View All Past Trades Button */}
+        <button
+          onClick={() => setTradesModalOpen(true, null)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-xs text-purple-300 font-medium transition-colors cursor-pointer"
+          title="Inspect all past trades and execution ledger across all stocks"
+        >
+          <History className="w-3.5 h-3.5 text-purple-400" />
+          <span className="hidden sm:inline">Past Trades</span>
+          {totalRecordedTrades > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono font-bold">
+              {totalRecordedTrades}
+            </span>
+          )}
         </button>
 
         {/* Refresh All Charts */}

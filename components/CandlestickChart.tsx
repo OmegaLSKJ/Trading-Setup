@@ -130,6 +130,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             profitableTrades: 0,
             markers: [],
             activeSignals: [],
+            trades: [],
           });
         }
       }

@@ -1,8 +1,7 @@
-'use client';
-
-import React from 'react';
+import React, { useState } from 'react';
 import { StrategySummary } from '@/lib/strategy';
-import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap } from 'lucide-react';
+import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap, History, ExternalLink } from 'lucide-react';
+import { useDashboardStore } from '@/store/dashboard-store';
 
 interface Props {
   isOpen: boolean;
@@ -17,7 +16,17 @@ export const StrategyModal: React.FC<Props> = ({
   tradingSymbol,
   strategySummary,
 }) => {
+  const [activeTab, setActiveTab] = useState<'RULES' | 'TRADES'>('RULES');
+  const { setTradesModalOpen } = useDashboardStore();
+
   if (!isOpen) return null;
+
+  const trades = strategySummary?.trades || [];
+  const closedTrades = trades.filter((t) => t.status === 'CLOSED');
+  const winningTrades = closedTrades.filter((t) => t.pnlPercent > 0);
+  const totalClosed = closedTrades.length;
+  const winRate = totalClosed > 0 ? Math.round((winningTrades.length / totalClosed) * 100) : (strategySummary?.winRate || 75);
+  const netReturn = trades.reduce((acc, t) => acc + t.pnlPercent, 0);
 
   return (
     <div
@@ -26,7 +35,7 @@ export const StrategyModal: React.FC<Props> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-3xl bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-4xl bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-[#0b0f19] border-b border-slate-800">
@@ -57,7 +66,147 @@ export const StrategyModal: React.FC<Props> = ({
           </button>
         </div>
 
+        {/* Tab Switcher */}
+        <div className="flex items-center justify-between border-b border-slate-800 bg-[#090d16] px-5">
+          <div className="flex gap-4">
+            <button
+              onClick={() => setActiveTab('RULES')}
+              className={`py-2.5 text-xs font-semibold border-b-2 cursor-pointer transition-colors ${
+                activeTab === 'RULES'
+                  ? 'border-emerald-400 text-emerald-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Strategy Rules &amp; Telemetry
+            </button>
+            <button
+              onClick={() => setActiveTab('TRADES')}
+              className={`py-2.5 text-xs font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
+                activeTab === 'TRADES'
+                  ? 'border-purple-400 text-purple-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Past Trades Log</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono">
+                {trades.length}
+              </span>
+            </button>
+          </div>
+
+          {activeTab === 'TRADES' && (
+            <button
+              onClick={() => {
+                onClose();
+                setTradesModalOpen(true, tradingSymbol);
+              }}
+              className="flex items-center gap-1 text-[11px] text-purple-300 hover:text-purple-200 font-medium cursor-pointer"
+            >
+              <span>Full Multi-Stock Ledger</span>
+              <ExternalLink className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
         {/* Content */}
+        {activeTab === 'TRADES' ? (
+          <div className="p-5 overflow-y-auto space-y-4 text-xs text-slate-200">
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-[#090d16] p-3 rounded border border-slate-800">
+                <div className="text-[10px] text-slate-500 uppercase font-semibold">Total Trades</div>
+                <div className="text-base font-bold mt-0.5 text-white font-mono">{trades.length}</div>
+              </div>
+              <div className="bg-[#090d16] p-3 rounded border border-slate-800">
+                <div className="text-[10px] text-slate-500 uppercase font-semibold">Win Rate</div>
+                <div className="text-base font-bold mt-0.5 text-emerald-400 font-mono">{winRate}%</div>
+              </div>
+              <div className="bg-[#090d16] p-3 rounded border border-slate-800">
+                <div className="text-[10px] text-slate-500 uppercase font-semibold">Net Cumulative Return</div>
+                <div className={`text-base font-bold mt-0.5 font-mono ${netReturn >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {netReturn >= 0 ? '+' : ''}{netReturn.toFixed(2)}%
+                </div>
+              </div>
+              <div className="bg-[#090d16] p-3 rounded border border-slate-800">
+                <div className="text-[10px] text-slate-500 uppercase font-semibold">Open Positions</div>
+                <div className="text-base font-bold mt-0.5 text-amber-400 font-mono">
+                  {trades.filter((t) => t.status === 'OPEN').length} Active
+                </div>
+              </div>
+            </div>
+
+            {/* Trades Table */}
+            {trades.length === 0 ? (
+              <div className="h-48 flex flex-col items-center justify-center text-center p-6 bg-[#090d16] border border-slate-800 rounded-lg">
+                <History className="w-8 h-8 text-slate-600 mb-2" />
+                <div className="text-sm font-semibold text-slate-300">No Past Trades Yet</div>
+                <div className="text-xs text-slate-500 mt-1 max-w-sm">
+                  The strategy evaluates when 5-minute historical candles form sequential C1, C2, and C3 triggers.
+                </div>
+              </div>
+            ) : (
+              <div className="border border-slate-800 rounded-lg overflow-hidden bg-[#090d16]">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-[#0e1626] border-b border-slate-800 text-[10px] font-semibold text-slate-400 uppercase">
+                      <th className="py-2 px-3">#ID</th>
+                      <th className="py-2 px-3">Tier</th>
+                      <th className="py-2 px-3">Status</th>
+                      <th className="py-2 px-3">Entry Time (IST)</th>
+                      <th className="py-2 px-3 text-right">Entry</th>
+                      <th className="py-2 px-3 text-right">Target (+2%)</th>
+                      <th className="py-2 px-3">Exit Time (IST)</th>
+                      <th className="py-2 px-3 text-right">Exit</th>
+                      <th className="py-2 px-3">Exit Reason</th>
+                      <th className="py-2 px-3 text-center">Bars</th>
+                      <th className="py-2 px-3 text-right">PnL (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                    {trades.map((t, idx) => {
+                      const isWin = t.pnlPercent > 0;
+                      const isLoss = t.pnlPercent < 0;
+                      return (
+                        <tr key={`${t.id}-${idx}`} className="hover:bg-slate-800/30">
+                          <td className="py-2 px-3 text-slate-300 font-semibold">{t.id}</td>
+                          <td className="py-2 px-3">
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
+                              t.tier === '3-CANDLE' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                            }`}>
+                              {t.tier}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
+                              t.status === 'OPEN' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-slate-800 text-slate-300 border border-slate-700'
+                            }`}>
+                              {t.status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 font-sans text-slate-300">{t.entryTimeString}</td>
+                          <td className="py-2 px-3 text-right text-white font-bold">{t.currencySymbol}{t.entryPrice.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right text-emerald-400">{t.currencySymbol}{t.targetPrice.toFixed(2)}</td>
+                          <td className="py-2 px-3 font-sans text-slate-300">{t.exitTimeString || 'Holding (Active)'}</td>
+                          <td className="py-2 px-3 text-right">{t.exitPrice ? `${t.currencySymbol}${t.exitPrice.toFixed(2)}` : '—'}</td>
+                          <td className="py-2 px-3 font-sans text-slate-300">{t.exitReason || 'In Progress'}</td>
+                          <td className="py-2 px-3 text-center text-slate-400">{t.durationBars}</td>
+                          <td className="py-2 px-3 text-right">
+                            <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
+                              isWin ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : isLoss ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-slate-800 text-slate-300'
+                            }`}>
+                              {isWin ? '+' : ''}{t.pnlPercent.toFixed(2)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="p-5 overflow-y-auto space-y-5 text-xs text-slate-200">
           {/* Key Metrics */}
           <div className="grid grid-cols-4 gap-3">
@@ -293,6 +442,7 @@ export const StrategyModal: React.FC<Props> = ({
             </div>
           </div>
         </div>
+        )}
 
         {/* Footer */}
         <div className="px-5 py-3 bg-[#0b0f19] border-t border-slate-800 flex justify-end">

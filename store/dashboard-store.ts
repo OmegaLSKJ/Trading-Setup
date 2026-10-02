@@ -11,6 +11,7 @@ import {
   AutoRefreshInterval,
   ConnectionStatus,
 } from '@/lib/types';
+import { PastTrade } from '@/lib/strategy';
 
 const DEFAULT_INDICATORS: IndicatorConfig = {
   ema8: true,
@@ -87,6 +88,9 @@ interface DashboardState {
   targetChartForSearch: string | null;
   isLayoutModalOpen: boolean;
   isSettingsModalOpen: boolean;
+  isTradesModalOpen: boolean;
+  tradesModalSymbol: string | null;
+  symbolTrades: Record<string, PastTrade[]>;
 
   // Actions
   setActiveChartId: (id: string) => void;
@@ -132,6 +136,8 @@ interface DashboardState {
   closeSymbolSearch: () => void;
   setLayoutModalOpen: (open: boolean) => void;
   setSettingsModalOpen: (open: boolean) => void;
+  setTradesModalOpen: (open: boolean, symbol?: string | null) => void;
+  recordTradesForSymbol: (symbol: string, trades: PastTrade[]) => void;
 
   // Hydration from LocalStorage
   loadPersistedState: () => void;
@@ -164,6 +170,20 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   targetChartForSearch: null,
   isLayoutModalOpen: false,
   isSettingsModalOpen: false,
+  isTradesModalOpen: false,
+  tradesModalSymbol: null,
+  symbolTrades: {},
+
+  setTradesModalOpen: (open, symbol = null) =>
+    set({ isTradesModalOpen: open, tradesModalSymbol: symbol }),
+
+  recordTradesForSymbol: (symbol, trades) =>
+    set((state) => ({
+      symbolTrades: {
+        ...state.symbolTrades,
+        [symbol]: trades,
+      },
+    })),
 
   setActiveChartId: (id) => set({ activeChartId: id }),
 

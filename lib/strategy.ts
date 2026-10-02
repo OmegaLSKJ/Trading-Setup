@@ -21,6 +21,25 @@ export interface StrategySignal {
   pnlPercent?: number;
 }
 
+export interface PastTrade {
+  id: string;
+  symbol: string;
+  tier: '3-CANDLE' | 'EMA-TREND';
+  status: 'OPEN' | 'CLOSED';
+  entryTime: number;
+  entryTimeString: string;
+  entryPrice: number;
+  targetPrice: number;
+  exitTime?: number;
+  exitTimeString?: string;
+  exitPrice?: number;
+  exitReason?: string;
+  pnlPercent: number;
+  pnlAmount: number;
+  durationBars: number;
+  currencySymbol: string;
+}
+
 export interface StrategyTelemetry {
   livePrice: number;
   currencySymbol: string;
@@ -52,6 +71,7 @@ export interface StrategySummary {
   markers: StrategyMarker[];
   activeSignals: StrategySignal[];
   telemetry?: StrategyTelemetry;
+  trades: PastTrade[];
 }
 
 /**
@@ -115,6 +135,25 @@ function calculateSMASeries(values: number[], period: number): number[] {
   return result;
 }
 
+export function formatISTTime(unixSec: number): string {
+  try {
+    const d = new Date(unixSec * 1000);
+    return (
+      d.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }) + ' IST'
+    );
+  } catch {
+    return new Date(unixSec * 1000).toLocaleString();
+  }
+}
+
 /**
  * Universal implementation of User's PineScript V5 Strategy:
  * "Custom 3-Candle Buy Strategy - Sequential (C1=-2 C2=-1 C3=0)"
@@ -149,6 +188,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
       profitableTrades: 0,
       markers: [],
       activeSignals: [],
+      trades: [],
     };
   }
 
@@ -254,6 +294,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
   // 2. Sequential Evaluation
   const markers: StrategyMarker[] = [];
   const signals: StrategySignal[] = [];
+  const trades: PastTrade[] = [];
 
   interface OpenPosition {
     id: string;
@@ -261,6 +302,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     entryPrice: number;
     tp: number;
     tier: '3-CANDLE' | 'EMA-TREND';
+    tradeIndex: number;
   }
 
   const openPositions: OpenPosition[] = [];
@@ -289,6 +331,22 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         if (highs[i] >= pos.tp) {
           totalClosedTrades++;
           profitableTrades++;
+          const exitPrice = pos.tp;
+          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+          const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
+          const durationBars = i - pos.entryIndex;
+
+          if (trades[pos.tradeIndex]) {
+            trades[pos.tradeIndex].status = 'CLOSED';
+            trades[pos.tradeIndex].exitTime = candles[i].time;
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitPrice = exitPrice;
+            trades[pos.tradeIndex].exitReason = 'Take Profit (+2.0%)';
+            trades[pos.tradeIndex].pnlPercent = pnlPercent;
+            trades[pos.tradeIndex].pnlAmount = pnlAmount;
+            trades[pos.tradeIndex].durationBars = durationBars;
+          }
+
           markers.push({
             time: candles[i].time,
             position: 'aboveBar',
@@ -309,10 +367,26 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
       const isHigherThanPrev = highs[i] > prevHighest;
 
       if (isGreen && isHigherThanPrev && openPositions.length > 0) {
+        const exitPrice = closes[i];
         for (const pos of openPositions) {
           totalClosedTrades++;
-          if (closes[i] >= pos.entryPrice) {
+          const isProfitable = exitPrice >= pos.entryPrice;
+          if (isProfitable) {
             profitableTrades++;
+          }
+          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+          const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
+          const durationBars = i - pos.entryIndex;
+
+          if (trades[pos.tradeIndex]) {
+            trades[pos.tradeIndex].status = 'CLOSED';
+            trades[pos.tradeIndex].exitTime = candles[i].time;
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitPrice = exitPrice;
+            trades[pos.tradeIndex].exitReason = 'Green-High Tracker Exit';
+            trades[pos.tradeIndex].pnlPercent = pnlPercent;
+            trades[pos.tradeIndex].pnlAmount = pnlAmount;
+            trades[pos.tradeIndex].durationBars = durationBars;
           }
         }
         markers.push({
@@ -330,11 +404,28 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         prevHighest = 0;
       }
 
-      // 3) Protective Invalidation Exit (if price drops below EMA 16 or held for > 40 bars)
+      // 3) Protective Invalidation Exit (if held for > 40 bars)
       if (openPositions.length > 0 && i - openPositions[0].entryIndex > 40) {
+        const exitPrice = closes[i];
         for (const pos of openPositions) {
           totalClosedTrades++;
-          if (closes[i] >= pos.entryPrice) profitableTrades++;
+          const isProfitable = exitPrice >= pos.entryPrice;
+          if (isProfitable) profitableTrades++;
+
+          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+          const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
+          const durationBars = i - pos.entryIndex;
+
+          if (trades[pos.tradeIndex]) {
+            trades[pos.tradeIndex].status = 'CLOSED';
+            trades[pos.tradeIndex].exitTime = candles[i].time;
+            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time);
+            trades[pos.tradeIndex].exitPrice = exitPrice;
+            trades[pos.tradeIndex].exitReason = 'Max Hold Invalidation (40 bars)';
+            trades[pos.tradeIndex].pnlPercent = pnlPercent;
+            trades[pos.tradeIndex].pnlAmount = pnlAmount;
+            trades[pos.tradeIndex].durationBars = durationBars;
+          }
         }
         openPositions.length = 0;
         trackingHighs = false;
@@ -435,13 +526,50 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
       });
 
+      const tradeRecord: PastTrade = {
+        id: entryId,
+        symbol: symbol || 'EQUITY',
+        tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
+        status: 'OPEN',
+        entryTime: candles[c3].time,
+        entryTimeString: formatISTTime(candles[c3].time),
+        entryPrice,
+        targetPrice: tp,
+        pnlPercent: 0,
+        pnlAmount: 0,
+        durationBars: 0,
+        currencySymbol,
+      };
+      const tradeIndex = trades.length;
+      trades.push(tradeRecord);
+
       openPositions.push({
         id: entryId,
         entryIndex: c3,
         entryPrice,
         tp,
         tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
+        tradeIndex,
       });
+    }
+  }
+
+  // Final check for still-open positions to compute live floating PnL
+  const lastIndex = n - 1;
+  const livePrice = closes[lastIndex];
+
+  for (const pos of openPositions) {
+    const pnlPercent = Number((((livePrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+    const pnlAmount = Number((livePrice - pos.entryPrice).toFixed(2));
+    const durationBars = lastIndex - pos.entryIndex;
+
+    if (trades[pos.tradeIndex]) {
+      trades[pos.tradeIndex].status = 'OPEN';
+      trades[pos.tradeIndex].exitPrice = livePrice;
+      trades[pos.tradeIndex].exitReason = 'Active (Holding)';
+      trades[pos.tradeIndex].pnlPercent = pnlPercent;
+      trades[pos.tradeIndex].pnlAmount = pnlAmount;
+      trades[pos.tradeIndex].durationBars = durationBars;
     }
   }
 
@@ -452,8 +580,6 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
       : 76;
 
   // Active Live Bar Telemetry
-  const lastIndex = n - 1;
-  const livePrice = closes[lastIndex];
   const lastPos = openPositions.length > 0 ? openPositions[openPositions.length - 1] : null;
   const livePnLPercent = lastPos ? ((livePrice - lastPos.entryPrice) / lastPos.entryPrice) * 100 : undefined;
   const tpDistancePercent = lastPos ? ((lastPos.tp - livePrice) / livePrice) * 100 : undefined;
@@ -489,5 +615,6 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     markers,
     activeSignals: signals,
     telemetry,
+    trades: trades.slice().reverse(),
   };
 }

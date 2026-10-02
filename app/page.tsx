@@ -7,6 +7,7 @@ import { ChartGrid } from '@/components/ChartGrid';
 import { SymbolSearchModal } from '@/components/SymbolSearchModal';
 import { LayoutManagerModal } from '@/components/LayoutManagerModal';
 import { SettingsModal } from '@/components/SettingsModal';
+import { TradesHistoryModal } from '@/components/TradesHistoryModal';
 import { useDashboardStore } from '@/store/dashboard-store';
 
 export default function Home() {
@@ -46,6 +47,7 @@ export default function Home() {
       <SymbolSearchModal />
       <LayoutManagerModal />
       <SettingsModal />
+      <TradesHistoryModal />
     </div>
   );
 }
