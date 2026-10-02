@@ -938,7 +938,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              UPSTOX LIVE (1s)
+              UPSTOX LIVE (200ms)
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
@@ -946,7 +946,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              LIVE MARKET (1s)
+              LIVE MARKET (200ms)
             </span>
           )}
 

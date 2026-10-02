@@ -223,8 +223,8 @@ export async function GET(request: NextRequest) {
       // Poll US quotes every 2 seconds
       const usPollInterval = setInterval(pollUSLiveQuotes, 2000);
 
-      // Dispatch continuous live graph ticks every 1000ms (1 tick/second)
-      const tickDispatchInterval = setInterval(dispatchContinuousTicks, 1000);
+      // Dispatch continuous Ultra-Fast live graph ticks every 200ms (5 ticks/second)
+      const tickDispatchInterval = setInterval(dispatchContinuousTicks, 200);
 
       // Periodic SSE heartbeat every 15 seconds to prevent browser timeout
       const heartbeatInterval = setInterval(() => {
