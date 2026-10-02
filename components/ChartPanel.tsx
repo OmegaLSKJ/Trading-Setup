@@ -23,6 +23,7 @@ import {
   Target,
 } from 'lucide-react';
 import { StrategySummary } from '@/lib/strategy';
+import { StrategyModal } from './StrategyModal';
 
 interface Props {
   panel: ChartPanelState;
@@ -47,6 +48,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isIndicatorsMenuOpen, setIsIndicatorsMenuOpen] = useState(false);
   const [isDateMenuOpen, setIsDateMenuOpen] = useState(false);
+  const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
 
   // Real-time live price states with flashing effects
   const [livePrice, setLivePrice] = useState<number | null>(null);
@@ -203,7 +205,14 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
           {/* Strategy Live Signal Badge */}
           {panel.indicators.strategy && strategySummary?.lastSignal && (
-            <div className="hidden xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[10px] font-mono">
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsStrategyModalOpen(true);
+              }}
+              className="hidden xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono cursor-pointer transition-colors shadow-xs"
+              title="Click to view full strategy rules, backtest win rate & trade signals"
+            >
               <span className="text-amber-400 font-bold flex items-center gap-1">
                 <Target className="w-3 h-3" />
                 STRATEGY:
@@ -465,6 +474,14 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           onStrategyUpdate={setStrategySummary}
         />
       </div>
+
+      {/* Strategy Detail & Performance Modal */}
+      <StrategyModal
+        isOpen={isStrategyModalOpen}
+        onClose={() => setIsStrategyModalOpen(false)}
+        tradingSymbol={panel.instrument.trading_symbol}
+        strategySummary={strategySummary}
+      />
     </div>
   );
 };
