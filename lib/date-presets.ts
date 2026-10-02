@@ -1,5 +1,5 @@
 import { DateRangePreset } from './types';
-import { formatDateYYYYMMDD } from './upstox-service';
+import { formatDateYYYYMMDD } from './date-utils';
 
 export function getDateRangeForPreset(preset: DateRangePreset): { from: string; to: string } {
   const to = new Date();

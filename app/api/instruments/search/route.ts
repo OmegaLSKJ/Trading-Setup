@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { instrumentService } from '@/lib/instruments';
-import { allowApiRequest } from '@/lib/api-rate-limit';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  if (!allowApiRequest(request, 'instrument-search', 120)) {
-    return NextResponse.json({ success: false, error: 'Too many search requests; try again shortly', instruments: [] }, { status: 429 });
-  }
   const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q') || '';
+  const q = (searchParams.get('q') || '').trim().slice(0, 60);
   const limitStr = searchParams.get('limit') || '30';
   const limit = Math.min(Math.max(parseInt(limitStr, 10) || 30, 1), 100);
 
@@ -18,13 +16,18 @@ export async function GET(request: NextRequest) {
       instruments: results,
       count: results.length,
       isMasterLoaded: instrumentService.isMasterLoaded(),
+      masterLoaded: instrumentService.isMasterLoaded(),
+      masterLoading: instrumentService.isLoadingMaster(),
     });
   } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to search instruments';
     return NextResponse.json(
       {
         success: false,
-        error: err instanceof Error ? err.message : 'Failed to search instruments',
+        error: message,
         instruments: [],
+        masterLoaded: instrumentService.isMasterLoaded(),
+        masterLoading: instrumentService.isLoadingMaster(),
       },
       { status: 500 }
     );

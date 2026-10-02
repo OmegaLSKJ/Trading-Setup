@@ -45,10 +45,10 @@ const DATE_PRESETS: { label: string; value: DateRangePreset }[] = [
 
 export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const chartRef = useRef<CandlestickChartHandle>(null);
-  const navigatedToastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [partialNotice, setPartialNotice] = useState<string | null>(null);
   const [isIndicatorsMenuOpen, setIsIndicatorsMenuOpen] = useState(false);
   const [isDateMenuOpen, setIsDateMenuOpen] = useState(false);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
@@ -60,6 +60,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [tickFlash, setTickFlash] = useState<'UP' | 'DOWN' | null>(null);
   const [strategySummary, setStrategySummary] = useState<StrategySummary | null>(null);
 
+  const isHydrated = useDashboardStore((s) => s.isHydrated);
   const activeChartId = useDashboardStore((s) => s.activeChartId);
   const setActiveChartId = useDashboardStore((s) => s.setActiveChartId);
   const updateChartTimeframe = useDashboardStore((s) => s.updateChartTimeframe);
@@ -75,6 +76,23 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const targetTradeNavigation = useDashboardStore((s) => s.targetTradeNavigation);
   const clearTradeNavigation = useDashboardStore((s) => s.clearTradeNavigation);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestGenerationRef = useRef<number>(0);
+  const isPollingRef = useRef<boolean>(false);
+  const lastContextRef = useRef<string>(`${panel.instrument.instrument_key}-${panel.timeframe}`);
+
+  // Clear old candles on context change
+  useEffect(() => {
+    const currentContext = `${panel.instrument.instrument_key}-${panel.timeframe}`;
+    if (lastContextRef.current !== currentContext) {
+      lastContextRef.current = currentContext;
+      setCandles([]);
+      setLivePrice(null);
+      setErrorMessage(null);
+      setPartialNotice(null);
+    }
+  }, [panel.instrument.instrument_key, panel.timeframe]);
+
   const [navigatedTradeToast, setNavigatedTradeToast] = useState<string | null>(null);
 
   // Jump to trade on chart when clicked in the Past Trades ledger
@@ -87,28 +105,25 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       const tradeId = targetTradeNavigation.id;
       const toastTimer = setTimeout(() => {
         setNavigatedTradeToast(`Navigated to ${tradeId} (${panel.instrument.trading_symbol})`);
-        if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);
-        navigatedToastTimerRef.current = setTimeout(() => setNavigatedTradeToast(null), 3800);
       }, 0);
 
       // Scroll after chart canvas has rendered and retry to ensure candle alignment
       const delays = [80, 250, 600];
-      const scrollTimers = delays.map((delay) => setTimeout(() => {
+      delays.forEach((delay) => {
+        setTimeout(() => {
           chartRef.current?.scrollToTime(timeToScroll);
-        }, delay));
+        }, delay);
+      });
 
-      const clearNavigationTimer = setTimeout(clearTradeNavigation, 650);
+      clearTradeNavigation();
+      const hideTimer = setTimeout(() => setNavigatedTradeToast(null), 3800);
       return () => {
         clearTimeout(toastTimer);
-        clearTimeout(clearNavigationTimer);
-        scrollTimers.forEach(clearTimeout);
+        clearTimeout(hideTimer);
       };
     }
-  }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation]);
+  }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation, candles]);
 
-  useEffect(() => () => {
-    if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);
-  }, []);
 
   const handleStrategyUpdate = useCallback(
     (summary: StrategySummary) => {
@@ -122,10 +137,26 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
   const isActive = activeChartId === panel.id;
 
-  // Fetch candle data
+  // Fetch candle data with abort, generation sequencing, and in-flight guard
   const loadCandles = useCallback(async () => {
+    if (!isHydrated) return;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+
+    // Abort previous fetch
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const currentGen = ++requestGenerationRef.current;
+    const currentKey = panel.instrument.instrument_key;
+    const currentTf = panel.timeframe;
+
     setIsLoading(true);
     setErrorMessage(null);
+    setPartialNotice(null);
 
     const { from, to } =
       panel.dateRangePreset === 'custom' && panel.customFrom && panel.customTo
@@ -134,11 +165,14 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
     try {
       const url = `/api/candles?instrumentKey=${encodeURIComponent(
-        panel.instrument.instrument_key
-      )}&timeframe=${panel.timeframe}&from=${from}&to=${to}`;
+        currentKey
+      )}&timeframe=${currentTf}&from=${from}&to=${to}`;
 
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: controller.signal });
       const data = await res.json();
+
+      if (currentGen !== requestGenerationRef.current) return;
+      if (panel.instrument.instrument_key !== currentKey || panel.timeframe !== currentTf) return;
 
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to fetch Upstox candles');
@@ -146,6 +180,12 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
       const fetchedCandles = data.candles || [];
       setCandles(fetchedCandles);
+
+      if (data.partial && data.failedRanges && data.failedRanges.length > 0) {
+        setPartialNotice(
+          `Partial data: ${data.failedRanges.length} date range(s) could not be retrieved from provider.`
+        );
+      }
 
       if (fetchedCandles.length > 0) {
         const last = fetchedCandles[fetchedCandles.length - 1];
@@ -156,19 +196,36 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
         setLiveChangePercent(first.open > 0 ? (change / first.open) * 100 : 0);
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error fetching market data';
-      console.warn(`Chart panel error [${panel.instrument.trading_symbol}]:`, message);
-      setErrorMessage(message);
+      const isAbort = (err as { name?: string })?.name === 'AbortError';
+      if (isAbort) return;
+      if (currentGen !== requestGenerationRef.current) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Chart panel error [${panel.instrument.trading_symbol}]:`, msg);
+      setErrorMessage(msg || 'Error fetching Upstox data');
     } finally {
-      setIsLoading(false);
+      if (currentGen === requestGenerationRef.current) {
+        setIsLoading(false);
+        isPollingRef.current = false;
+      }
     }
-  }, [panel.instrument.instrument_key, panel.instrument.trading_symbol, panel.timeframe, panel.dateRangePreset, panel.customFrom, panel.customTo]);
+  }, [
+    isHydrated,
+    panel.instrument.instrument_key,
+    panel.instrument.trading_symbol,
+    panel.timeframe,
+    panel.dateRangePreset,
+    panel.customFrom,
+    panel.customTo,
+  ]);
 
   // Initial load and dependency updates
   useEffect(() => {
-    const timer = setTimeout(() => void loadCandles(), 0);
+    const timer = setTimeout(() => {
+      loadCandles();
+    }, 0);
     return () => clearTimeout(timer);
   }, [loadCandles, globalRefreshTrigger]);
+
 
   // Auto-refresh polling timer
   useEffect(() => {
@@ -199,6 +256,22 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   }, []);
 
   const isPositive = liveChange >= 0;
+
+  const isUS = panel.instrument.instrument_key.startsWith('US|');
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: isUS ? 'America/New_York' : 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
+  const requestedRange =
+    panel.dateRangePreset === 'custom' && panel.customFrom && panel.customTo
+      ? { from: panel.customFrom, to: panel.customTo }
+      : getDateRangeForPreset(panel.dateRangePreset);
+  const requestedTo = requestedRange.to;
+
+  const isHistoricalOnly = requestedTo < todayStr;
 
   return (
     <div
@@ -581,6 +654,19 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
         </div>
       </div>
 
+      {/* Partial ranges warning banner */}
+      {partialNotice && (
+        <div className="bg-amber-950/80 border-b border-amber-800/60 px-3 py-1.5 flex items-center justify-between text-xs text-amber-200 z-10 shrink-0">
+          <span className="truncate pr-2">⚠️ {partialNotice}</span>
+          <button
+            onClick={() => setPartialNotice(null)}
+            className="text-amber-400 hover:text-white text-[10px] font-mono cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Error notification banner */}
       {errorMessage && (
         <div className="bg-rose-950/80 border-b border-rose-800/60 px-3 py-1.5 flex items-center justify-between text-xs text-rose-200 z-10 shrink-0">
@@ -612,6 +698,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           candles={candles}
           indicators={panel.indicators}
           isLoading={isLoading}
+          isLiveDisabled={isHistoricalOnly}
           onLivePriceUpdate={handleLivePriceUpdate}
           onStrategyUpdate={handleStrategyUpdate}
         />

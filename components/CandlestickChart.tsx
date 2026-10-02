@@ -15,8 +15,8 @@ import {
   PriceLineSource,
   Time,
   IPriceLine,
-  ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
+
 import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
 import {
   calculateEMA,
@@ -34,6 +34,7 @@ import { liveStreamManager } from '@/lib/live-stream';
 import { getIndianMarketStatus, getUSMarketStatus } from '@/lib/market-hours';
 import { formatDateTimeWithZone, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
+
 export interface CandlestickChartHandle {
   resetScale: () => void;
   scrollToTime: (unixSec: number) => void;
@@ -47,6 +48,7 @@ interface Props {
   candles: Candle[];
   indicators: IndicatorConfig;
   isLoading?: boolean;
+  isLiveDisabled?: boolean;
   onCrosshairMove?: (candle: Candle | null) => void;
   onLivePriceUpdate?: (
     price: number,
@@ -55,6 +57,60 @@ interface Props {
     direction: 'UP' | 'DOWN' | 'EQUAL'
   ) => void;
   onStrategyUpdate?: (summary: StrategySummary) => void;
+}
+
+function getSessionAlignedBarStartTime(tickTimestamp: number, tf: Timeframe, isUS: boolean): number {
+  if (tf === '1h') {
+    if (!isUS) {
+      // Indian exchange: session starts at 09:15 IST (UTC+5:30 -> 19800 sec offset)
+      // 09:15 IST is 33300 seconds from IST midnight
+      const istTime = tickTimestamp + 19800;
+      const istMidnight = Math.floor(istTime / 86400) * 86400;
+      const sessionStartIST = istMidnight + (9 * 3600 + 15 * 60);
+      if (istTime >= sessionStartIST) {
+        const hoursPassed = Math.floor((istTime - sessionStartIST) / 3600);
+        return sessionStartIST + hoursPassed * 3600 - 19800;
+      }
+      return Math.floor(tickTimestamp / 3600) * 3600;
+    } else {
+      // US exchange: session starts at 09:30 ET
+      const etTime = tickTimestamp - 18000;
+      const etMidnight = Math.floor(etTime / 86400) * 86400;
+      const sessionStartET = etMidnight + (9 * 3600 + 30 * 60);
+      if (etTime >= sessionStartET) {
+        const hoursPassed = Math.floor((etTime - sessionStartET) / 3600);
+        return sessionStartET + hoursPassed * 3600 + 18000;
+      }
+      return Math.floor(tickTimestamp / 3600) * 3600;
+    }
+  }
+
+  if (tf === '1D') {
+    if (!isUS) {
+      // Align to IST date midnight
+      const istTime = tickTimestamp + 19800;
+      const istMidnight = Math.floor(istTime / 86400) * 86400;
+      return istMidnight - 19800;
+    } else {
+      // Align to US ET date midnight
+      const etTime = tickTimestamp - 18000;
+      const etMidnight = Math.floor(etTime / 86400) * 86400;
+      return etMidnight + 18000;
+    }
+  }
+
+  // Intraday standard minute bucketing
+  let intervalSec = 300;
+  switch (tf) {
+    case '1m': intervalSec = 60; break;
+    case '3m': intervalSec = 180; break;
+    case '5m': intervalSec = 300; break;
+    case '10m': intervalSec = 600; break;
+    case '15m': intervalSec = 900; break;
+    case '30m': intervalSec = 1800; break;
+    default: intervalSec = 300; break;
+  }
+  return Math.floor(tickTimestamp / intervalSec) * intervalSec;
 }
 
 export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
@@ -67,6 +123,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       candles,
       indicators,
       isLoading,
+      isLiveDisabled,
       onCrosshairMove,
       onLivePriceUpdate,
       onStrategyUpdate,
@@ -81,7 +138,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const rsiPriceLinesRef = useRef<IPriceLine[]>([]);
-    const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const markersPluginRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
+
 
     // Active indicators snapshot lookup by timestamp for crosshair hover inspection
     const candleIndicatorsMap = useRef<Map<number, LiveIndicatorsSnapshot>>(new Map());
@@ -107,13 +165,22 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const syncSettings = useDashboardStore((s) => s.syncSettings);
     const syncSettingsRef = useRef(syncSettings);
     syncSettingsRef.current = syncSettings;
-    const chartIdRef = useRef(chartId);
-    chartIdRef.current = chartId;
-    const onCrosshairMoveRef = useRef(onCrosshairMove);
-    onCrosshairMoveRef.current = onCrosshairMove;
+
     const selectedTimezone = useDashboardStore((s) => s.selectedTimezone) || DEFAULT_TIMEZONE;
     const selectedTimezoneRef = useRef(selectedTimezone);
     selectedTimezoneRef.current = selectedTimezone;
+
+    const lastContextRef = useRef<string>('');
+
+    // Clean up any pending strategy timer on unmount
+    useEffect(() => {
+      return () => {
+        if (strategyPendingTimerRef.current) {
+          clearTimeout(strategyPendingTimerRef.current);
+          strategyPendingTimerRef.current = null;
+        }
+      };
+    }, []);
 
     useImperativeHandle(ref, () => ({
       resetScale: () => {
@@ -172,7 +239,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       if (currentIndicators.strategy && list && list.length >= 15) {
         try {
-          const summary = evaluateStrategy(list, tradingSymbol, selectedTimezone);
+          const summary = evaluateStrategy(list, tradingSymbol, timeframe);
           const chartMarkers = summary.markers.map((m) => ({
             time: m.time as unknown as Time,
             position: m.position,
@@ -201,16 +268,19 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             description: '',
             currentTrend: 'NEUTRAL',
             lastSignal: null,
-            winRate: 0,
+            winRate: null,
             totalSignals: 0,
             profitableTrades: 0,
+            totalClosedTrades: 0,
             markers: [],
             activeSignals: [],
             trades: [],
           });
         }
       }
-    }, [tradingSymbol, selectedTimezone]);
+    }, [tradingSymbol, timeframe]);
+
+
 
     const triggerLiveStrategyEvaluation = useCallback(() => {
       const now = Date.now();
@@ -328,7 +398,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
           setHoverData(null);
           setHoverIndicators(null);
-          onCrosshairMoveRef.current?.(null);
+          if (onCrosshairMove) onCrosshairMove(null);
           return;
         }
 
@@ -359,8 +429,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const histSnap = candleIndicatorsMap.current.get(timeNum);
           setHoverIndicators(histSnap || null);
 
-          if (onCrosshairMoveRef.current) {
-            onCrosshairMoveRef.current({
+          if (onCrosshairMove) {
+            onCrosshairMove({
               time: timeNum,
               timeString: timeStr,
               open: candleData.open,
@@ -374,7 +444,45 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
         // Sync crosshair across charts
         if (syncSettingsRef.current.crosshair) {
-          chartSyncBus.emitCrosshair(chartIdRef.current, Number(param.time), param.point);
+          chartSyncBus.emitCrosshair(chartId, Number(param.time), param.point);
+        }
+      });
+
+      // Pointer leave: emit clear crosshair to other charts and clear local HUD
+      const handlePointerLeave = () => {
+        setHoverData(null);
+        setHoverIndicators(null);
+        if (onCrosshairMove) {
+          onCrosshairMove(null);
+        }
+        if (syncSettingsRef.current.crosshair) {
+          chartSyncBus.emitCrosshair(chartId, null, null);
+        }
+      };
+      container.addEventListener('pointerleave', handlePointerLeave);
+
+      // Subscribe to remote crosshair events from other charts
+      const unsubCrosshair = chartSyncBus.subscribeCrosshair((srcId, time) => {
+        if (srcId === chartId || !chartApiRef.current || !syncSettingsRef.current.crosshair) return;
+
+
+        try {
+          if (time === null) {
+            chartApiRef.current.clearCrosshairPosition();
+            setHoverData(null);
+            setHoverIndicators(null);
+          } else if (candleSeriesRef.current) {
+            const candleAtTime = activeCandlesRef.current.find((c) => c.time === time);
+            if (candleAtTime) {
+              chartApiRef.current.setCrosshairPosition(
+                candleAtTime.close,
+                time as unknown as Time,
+                candleSeriesRef.current
+              );
+            }
+          }
+        } catch {
+          // ignore
         }
       });
 
@@ -383,7 +491,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!logicalRange || isSyncingRange.current || !syncSettingsRef.current.timeRange) return;
         const timeRange = chart.timeScale().getVisibleRange();
         if (timeRange && typeof timeRange.from === 'number' && typeof timeRange.to === 'number') {
-          chartSyncBus.emitTimeRange(chartIdRef.current, timeRange.from, timeRange.to);
+          chartSyncBus.emitTimeRange(chartId, timeRange.from, timeRange.to);
         }
       });
 
@@ -398,6 +506,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       resizeObserver.observe(container);
 
       return () => {
+        container.removeEventListener('pointerleave', handlePointerLeave);
+        unsubCrosshair();
         resizeObserver.disconnect();
         chart.remove();
         chartApiRef.current = null;
@@ -468,7 +578,31 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         candleSeriesRef.current.setData([]);
         volumeSeriesRef.current.setData([]);
         activeCandlesRef.current = [];
+        candleIndicatorsMap.current.clear();
+        setLiveIndicators(null);
+        setHoverIndicators(null);
+        setHoverData(null);
+        emaSeriesRefs.current.forEach((s) => chartApiRef.current?.removeSeries(s));
+        emaSeriesRefs.current.clear();
+        if (rsiSeriesRef.current) {
+          chartApiRef.current?.removeSeries(rsiSeriesRef.current);
+          rsiSeriesRef.current = null;
+        }
+        if (vwapSeriesRef.current) {
+          chartApiRef.current?.removeSeries(vwapSeriesRef.current);
+          vwapSeriesRef.current = null;
+        }
         return;
+      }
+
+      const currentContext = `${instrumentKey}-${timeframe}`;
+      const isContextChange = lastContextRef.current !== currentContext;
+      if (isContextChange) {
+        lastContextRef.current = currentContext;
+        if (strategyPendingTimerRef.current) {
+          clearTimeout(strategyPendingTimerRef.current);
+          strategyPendingTimerRef.current = null;
+        }
       }
 
       // Deep copy candles to mutable active list
@@ -493,14 +627,14 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       candleSeriesRef.current.setData(candleData);
 
-      if (indicators.volume) {
+      if (indicatorsRef.current.volume) {
         volumeSeriesRef.current.setData(volumeData);
       } else {
         volumeSeriesRef.current.setData([]);
       }
 
-      // Zoom to the most recent 75 candles with right padding
-      if (chartApiRef.current && candleData.length > 0) {
+      // Zoom to the most recent 75 candles ONLY on context changes
+      if (chartApiRef.current && candleData.length > 0 && isContextChange) {
         const total = candleData.length;
         chartApiRef.current.timeScale().setVisibleLogicalRange({
           from: Math.max(0, total - 75),
@@ -550,28 +684,32 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       const initialSnap = computeLiveIndicatorsSnapshot(candles);
       setLiveIndicators(initialSnap);
-    }, [candles, indicators.volume, instrumentKey]);
+    }, [candles, instrumentKey, timeframe]);
+
+    // Separate Volume Visibility Effect (no data replacement)
+    useEffect(() => {
+      if (!volumeSeriesRef.current) return;
+      if (indicators.volume && activeCandlesRef.current.length > 0) {
+        const volumeData = activeCandlesRef.current.map((c) => ({
+          time: c.time as unknown as Time,
+          value: c.volume,
+          color: c.close >= c.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
+        }));
+        volumeSeriesRef.current.setData(volumeData);
+      } else {
+        volumeSeriesRef.current.setData([]);
+      }
+    }, [indicators.volume]);
 
     // Real-Time Live Market Data Stream Subscription
     useEffect(() => {
-      if (!instrumentKey) return;
-
-      const getTimeframeSeconds = (tf: string): number => {
-        switch (tf) {
-          case '1m': return 60;
-          case '3m': return 180;
-          case '5m': return 300;
-          case '10m': return 600;
-          case '15m': return 900;
-          case '30m': return 1800;
-          case '1h': return 3600;
-          case '1D': return 86400;
-          default: return 300;
-        }
-      };
+      if (!instrumentKey || isLiveDisabled) return;
 
       const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
-        // STRICT RULE: Reject any tick updates when the market for this instrument is closed
+
+        // STRICT RULE: Reject any tick updates when quote is MARKET_CLOSED or market is closed
+        if (tick.state === 'MARKET_CLOSED') return;
+
         const isUS = instrumentKey.startsWith('US|');
         const isMarketOpen = isUS ? getUSMarketStatus().isOpen : getIndianMarketStatus().isOpen;
         if (!isMarketOpen) return;
@@ -582,12 +720,15 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         const last = list[list.length - 1];
         if (!last) return;
 
+        // Reject ticks older than the last bar
+        if (tick.timestamp < last.time) return;
+
         const newPrice = Number(tick.price.toFixed(2));
         const direction = tick.direction || (newPrice > last.close ? 'UP' : newPrice < last.close ? 'DOWN' : 'EQUAL');
 
-        // Check if this tick belongs to the current bar or starts a new candle
-        const intervalSec = getTimeframeSeconds(timeframe);
-        const barStartTime = Math.floor(tick.timestamp / intervalSec) * intervalSec;
+        // Align bar start to exchange session
+        const barStartTime = getSessionAlignedBarStartTime(tick.timestamp, timeframe, isUS);
+        if (barStartTime < last.time) return;
 
         let isNewBar = false;
 
@@ -601,9 +742,14 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             high: newPrice,
             low: newPrice,
             close: newPrice,
-            volume: tick.volumeDelta,
+            volume: tick.volumeDelta || 0,
           };
           list.push(newCandle);
+
+          // Bound live buffer to 2000 bars
+          if (list.length > 2000) {
+            list.shift();
+          }
 
           try {
             candleSeriesRef.current.update({
@@ -652,7 +798,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             });
 
             // 2. Update Volume Histogram on Canvas
-            if (volumeSeriesRef.current && indicatorsRef.current.volume) {
+            if (volumeSeriesRef.current && indicators.volume) {
               volumeSeriesRef.current.update({
                 time: last.time as unknown as Time,
                 value: last.volume,
@@ -765,7 +911,10 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     // Update Indicators (EMAs, RSI, and VWAP Series on Chart Canvas)
     useEffect(() => {
       const chart = chartApiRef.current;
-      if (!chart || !candles || candles.length === 0) return;
+      if (!chart) return;
+
+      const targetCandles = activeCandlesRef.current.length > 0 ? activeCandlesRef.current : candles;
+      if (!targetCandles || targetCandles.length === 0) return;
 
       // Adjust main candle and volume scale margins if RSI pane is active
       if (candleSeriesRef.current) {
@@ -806,7 +955,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             });
             emaSeriesRefs.current.set(key, series);
           }
-          const emaData = calculateEMA(candles, period).map((p) => ({
+          const emaData = calculateEMA(targetCandles, period).map((p) => ({
             time: p.time as unknown as Time,
             value: p.value,
           }));
@@ -874,7 +1023,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           rsiSeriesRef.current = rsiSeries;
         }
 
-        const rsiData = calculateRSI(candles, 14).map((p) => ({
+        const rsiData = calculateRSI(targetCandles, 14).map((p) => ({
           time: p.time as unknown as Time,
           value: p.value,
         }));
@@ -895,7 +1044,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             title: 'VWAP',
           });
         }
-        const vwapData = calculateVWAP(candles).map((p) => ({
+        const vwapData = calculateVWAP(targetCandles).map((p) => ({
           time: p.time as unknown as Time,
           value: p.value,
         }));
@@ -939,7 +1088,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
-              {isUSInstrument ? 'US OPEN · SIM 200ms' : 'NSE/BSE OPEN · SIM 200ms'}
+              {isUSInstrument ? 'US LIVE (200ms)' : 'NSE/BSE LIVE (200ms)'}
             </span>
           ) : (
             <span

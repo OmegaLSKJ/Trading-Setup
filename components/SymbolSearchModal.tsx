@@ -3,80 +3,140 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Instrument } from '@/lib/types';
 import { useDashboardStore } from '@/store/dashboard-store';
-import { Search, X, TrendingUp, Building2, Layers } from 'lucide-react';
+import { SharedDialog } from '@/components/SharedDialog';
+import { Search, X, TrendingUp, Building2, Layers, RefreshCw } from 'lucide-react';
 
 export const SymbolSearchModal: React.FC = () => {
-  const {
-    isSymbolSearchOpen,
-    closeSymbolSearch,
-    targetChartForSearch,
-    updateChartInstrument,
-    addToWatchlist,
-  } = useDashboardStore();
+  const isSymbolSearchOpen = useDashboardStore((s) => s.isSymbolSearchOpen);
+  const closeSymbolSearch = useDashboardStore((s) => s.closeSymbolSearch);
+  const targetChartForSearch = useDashboardStore((s) => s.targetChartForSearch);
+  const updateChartInstrument = useDashboardStore((s) => s.updateChartInstrument);
+  const addToWatchlist = useDashboardStore((s) => s.addToWatchlist);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Instrument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isMasterLoading, setIsMasterLoading] = useState(false);
   const [filterSegment, setFilterSegment] = useState<'ALL' | 'EQ' | 'INDEX' | 'FO' | 'US'>('ALL');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const latestSearchIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const searchSeqRef = useRef<number>(0);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const fetchResults = useCallback(async (q: string) => {
-    const searchId = ++latestSearchIdRef.current;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const currentSeq = ++searchSeqRef.current;
+
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`);
+      const res = await fetch(
+        `/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`,
+        { signal: controller.signal }
+      );
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
-      const list: Instrument[] = data.success && Array.isArray(data.instruments) ? data.instruments : [];
+
+      if (currentSeq !== searchSeqRef.current) return;
+
+      setIsMasterLoading(Boolean(data.masterLoading));
+
+      const list: Instrument[] = Array.isArray(data.instruments) ? [...data.instruments] : [];
+
+      // If user typed a clean US ticker symbol (e.g. AAPL, NVDA, TSLA, SPY, MSFT)
+      // Clearly mark synthesized items as unverified
       const cleanQ = q.trim().toUpperCase();
       if (cleanQ && /^[A-Z]{1,5}$/.test(cleanQ)) {
-        const hasExisting = list.some((item) => item.trading_symbol.toUpperCase() === cleanQ);
+        const hasExisting = list.some(
+          (i) => i.trading_symbol.toUpperCase() === cleanQ
+        );
         if (!hasExisting) {
           list.unshift({
             instrument_key: `US|${cleanQ}`,
             trading_symbol: cleanQ,
-            name: `${cleanQ} (US Market)`,
+            name: `${cleanQ} (US Market · Unverified)`,
             exchange: 'NASDAQ',
             segment: 'US_EQ',
             instrument_type: 'EQ',
           });
         }
       }
-      if (searchId === latestSearchIdRef.current) {
-        setResults(list);
-        setSelectedIndex(0);
+
+      setResults(list);
+      setSelectedIndex(0);
+    } catch (e: unknown) {
+      const isAbort = (e as { name?: string })?.name === 'AbortError';
+      if (!isAbort) {
+        console.error('Failed to search instruments:', e);
       }
-    } catch (error) {
-      if (searchId === latestSearchIdRef.current) console.error('Failed to search instruments:', error);
     } finally {
-      if (searchId === latestSearchIdRef.current) setIsLoading(false);
+      if (currentSeq === searchSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   // Focus input on modal open
   useEffect(() => {
     if (isSymbolSearchOpen) {
-      const resetTimer = setTimeout(() => {
+      const timer = setTimeout(() => {
         setQuery('');
         setSelectedIndex(0);
         inputRef.current?.focus();
+        fetchResults('');
       }, 0);
-      return () => clearTimeout(resetTimer);
+      return () => clearTimeout(timer);
+    } else {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     }
-    latestSearchIdRef.current++;
-  }, [isSymbolSearchOpen]);
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [isSymbolSearchOpen, fetchResults]);
 
   // Debounced search
   useEffect(() => {
     if (!isSymbolSearchOpen) return;
     const timer = setTimeout(() => {
-      void fetchResults(query);
+      fetchResults(query);
     }, 200);
 
     return () => clearTimeout(timer);
   }, [query, isSymbolSearchOpen, fetchResults]);
+
+  // Reset or bound selection when segment filters change
+  useEffect(() => {
+    const timer = setTimeout(() => setSelectedIndex(0), 0);
+    return () => clearTimeout(timer);
+  }, [filterSegment]);
+
+  // Scroll highlighted row into view
+  useEffect(() => {
+    if (itemRefs.current[selectedIndex]) {
+      itemRefs.current[selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedIndex]);
+
+  // Poll search if master is still downloading/indexing
+  useEffect(() => {
+    if (!isSymbolSearchOpen || !isMasterLoading) return;
+
+    const pollTimer = setInterval(() => {
+      fetchResults(query);
+    }, 2500);
+
+    return () => clearInterval(pollTimer);
+  }, [isSymbolSearchOpen, isMasterLoading, query, fetchResults]);
+
 
   const filteredResults = results.filter((item) => {
     if (filterSegment === 'ALL') return true;
@@ -112,24 +172,22 @@ export const SymbolSearchModal: React.FC = () => {
     }
   };
 
-  if (!isSymbolSearchOpen) return null;
-
   return (
-    <div
-      onClick={closeSymbolSearch}
-      className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-100"
+    <SharedDialog
+      isOpen={isSymbolSearchOpen}
+      onClose={closeSymbolSearch}
+      titleId="symbol-search-title"
+      ariaLabel="Symbol Search"
+      className="max-w-2xl max-h-[75vh]"
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-2xl bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[75vh]"
-        onKeyDown={handleKeyDown}
-      >
+      <div onKeyDown={handleKeyDown} className="flex flex-col h-full overflow-hidden">
         {/* Search Input Bar */}
-        <div className="flex items-center px-4 py-3 border-b border-slate-800 bg-[#0b0f19] gap-3">
+        <div className="flex items-center px-4 py-3 border-b border-slate-800 bg-[#0b0f19] gap-3 shrink-0">
           <Search className="w-5 h-5 text-emerald-400 shrink-0" />
           <input
             ref={inputRef}
             type="text"
+            id="symbol-search-title"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search Indian stocks (RELIANCE, NIFTY 50) or US stocks (AAPL, TSLA, NVDA)..."
@@ -140,14 +198,26 @@ export const SymbolSearchModal: React.FC = () => {
           )}
           <button
             onClick={closeSymbolSearch}
+            aria-label="Close symbol search"
             className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
+        {/* Master Loading Notification */}
+        {isMasterLoading && (
+          <div className="px-4 py-1.5 bg-amber-950/40 border-b border-amber-900/40 flex items-center justify-between text-[11px] text-amber-300 shrink-0">
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
+              <span>Full NSE instrument master is loading in the background. Showing seeded symbols.</span>
+            </span>
+            <span className="text-[10px] text-amber-400/80 font-mono">Syncing...</span>
+          </div>
+        )}
+
         {/* Filter Segment Tabs */}
-        <div className="flex items-center gap-1 px-4 py-2 bg-[#090d16] border-b border-slate-800/80 text-xs">
+        <div className="flex items-center gap-1 px-4 py-2 bg-[#090d16] border-b border-slate-800/80 text-xs shrink-0">
           <button
             onClick={() => setFilterSegment('ALL')}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
@@ -212,13 +282,25 @@ export const SymbolSearchModal: React.FC = () => {
             const isSelected = idx === selectedIndex;
             const isIndex = item.segment?.includes('INDEX');
             const isFO = item.segment?.includes('FO');
+            const isUnverified = item.name.includes('Unverified') || item.instrument_key.startsWith('US|');
 
             return (
               <div
                 key={item.instrument_key}
+                ref={(el) => {
+                  itemRefs.current[idx] = el;
+                }}
+                tabIndex={0}
+                role="button"
                 onClick={() => handleSelectInstrument(item)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleSelectInstrument(item);
+                  }
+                }}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors ${
+                className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors focus:outline-hidden ${
                   isSelected
                     ? 'bg-emerald-950/40 border-l-2 border-emerald-400'
                     : 'hover:bg-slate-800/40'
@@ -254,6 +336,11 @@ export const SymbolSearchModal: React.FC = () => {
                       <span className="text-[10px] px-1 rounded bg-slate-800/80 text-slate-400 font-mono">
                         {item.segment}
                       </span>
+                      {isUnverified && (
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 font-mono">
+                          UNVERIFIED
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate">
                       {item.name}
@@ -270,7 +357,7 @@ export const SymbolSearchModal: React.FC = () => {
         </div>
 
         {/* Footer shortcuts */}
-        <div className="px-4 py-2 bg-[#0b0f19] border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
+        <div className="px-4 py-2 bg-[#0b0f19] border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <span>↑↓ Navigate</span>
             <span>↵ Select</span>
@@ -279,6 +366,7 @@ export const SymbolSearchModal: React.FC = () => {
           <span>Showing {filteredResults.length} instruments</span>
         </div>
       </div>
-    </div>
+    </SharedDialog>
   );
 };
+

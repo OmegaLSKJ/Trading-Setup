@@ -33,7 +33,10 @@ export function calculateEMA(candles: Candle[], period: number): IndicatorPoint[
 }
 
 /**
- * Calculates Relative Strength Index (RSI) using Wilder's Smoothing
+ * Calculates Relative Strength Index (RSI) using Wilder's Smoothing.
+ * Convention: 14 real price changes seed (candles 0 to 14).
+ * Flat series behavior: returns 50 when gains and losses are both 0.
+ * Preserves 0 RSI values when there are only losses.
  */
 export function calculateRSI(candles: Candle[], period = 14): IndicatorPoint[] {
   if (candles.length <= period) return [];
@@ -48,34 +51,53 @@ export function calculateRSI(candles: Candle[], period = 14): IndicatorPoint[] {
     losses.push(diff < 0 ? Math.abs(diff) : 0);
   }
 
-  // Initial average gain / loss
+  // Initial average gain / loss over first 14 real price changes
   let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
   let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
 
-  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  let rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + rs);
+  let rsi: number;
+  if (avgGain === 0 && avgLoss === 0) {
+    rsi = 50; // flat-series neutral
+  } else if (avgLoss === 0) {
+    rsi = 100;
+  } else if (avgGain === 0) {
+    rsi = 0;
+  } else {
+    const rs = avgGain / avgLoss;
+    rsi = 100 - 100 / (1 + rs);
+  }
 
   results.push({ time: candles[period].time, value: Number(rsi.toFixed(2)) });
 
   // Subsequent Wilder's smoothed values
-  for (let i = period + 1; i < candles.length; i++) {
-    const gain = gains[i - 1];
-    const loss = losses[i - 1];
+  for (let i = period; i < gains.length; i++) {
+    const gain = gains[i];
+    const loss = losses[i];
 
     avgGain = (avgGain * (period - 1) + gain) / period;
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
-    rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + rs);
+    if (avgGain === 0 && avgLoss === 0) {
+      rsi = 50;
+    } else if (avgLoss === 0) {
+      rsi = 100;
+    } else if (avgGain === 0) {
+      rsi = 0;
+    } else {
+      const rs = avgGain / avgLoss;
+      rsi = 100 - 100 / (1 + rs);
+    }
 
-    results.push({ time: candles[i].time, value: Number(rsi.toFixed(2)) });
+    results.push({ time: candles[i + 1].time, value: Number(rsi.toFixed(2)) });
   }
 
   return results;
 }
 
 /**
- * Calculates Volume Weighted Average Price (VWAP), resetting each trading day
+ * Calculates Volume Weighted Average Price (VWAP), resetting each trading day.
+ * When a bar has 0 volume, typical price is preserved with 0 volume weight;
+ * if cumulative volume for the day is 0, typical price is returned without weight fabrication.
  */
 export function calculateVWAP(candles: Candle[]): IndicatorPoint[] {
   if (candles.length === 0) return [];
@@ -96,7 +118,7 @@ export function calculateVWAP(candles: Candle[]): IndicatorPoint[] {
     }
 
     const typicalPrice = (c.high + c.low + c.close) / 3;
-    const vol = c.volume || 1;
+    const vol = c.volume || 0;
 
     cumulativeTypicalVolume += typicalPrice * vol;
     cumulativeVolume += vol;
@@ -147,12 +169,14 @@ export function calculateDPO(candles: Candle[], period = 20): IndicatorPoint[] {
 }
 
 /**
- * Calculates Average Directional Index (ADX 14) with Wilder's Smoothing
+ * Calculates Average Directional Index (ADX 14) with Wilder's Smoothing.
+ * Emits from i = period - 1 (candleIdx = period - 1 + i = 26 for period 14).
+ * Preserves valid 0 ADX values.
  */
 export function calculateADX(candles: Candle[], period = 14): IndicatorPoint[] {
-  if (candles.length <= period * 2) return [];
-
   const n = candles.length;
+  if (n <= period * 2) return [];
+
   const tr: number[] = new Array(n).fill(0);
   const plusDM: number[] = new Array(n).fill(0);
   const minusDM: number[] = new Array(n).fill(0);
@@ -197,9 +221,9 @@ export function calculateADX(candles: Candle[], period = 14): IndicatorPoint[] {
   const adxValues = rma(dx.slice(period - 1), period);
   const results: IndicatorPoint[] = [];
 
-  for (let i = 0; i < adxValues.length; i++) {
-    const candleIdx = period - 1 + period - 1 + i;
-    if (candleIdx < n && adxValues[i] > 0) {
+  for (let i = period - 1; i < adxValues.length; i++) {
+    const candleIdx = (period - 1) + i;
+    if (candleIdx < n && adxValues[i] !== undefined && !isNaN(adxValues[i])) {
       results.push({
         time: candles[candleIdx].time,
         value: Number(adxValues[i].toFixed(1)),

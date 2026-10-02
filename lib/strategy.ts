@@ -1,4 +1,6 @@
-import { Candle } from './types';
+import { Candle, Timeframe } from './types';
+import { formatDateTimeWithZone, DEFAULT_TIMEZONE } from './timezones';
+import { calculateEMA, calculateRSI, calculateDPO, calculateADX } from './indicators';
 
 export interface StrategyMarker {
   time: number;
@@ -19,11 +21,15 @@ export interface StrategySignal {
   exitReason?: string;
   tier: '3-CANDLE';
   pnlPercent?: number;
+  isProvisional?: boolean;
 }
 
 export interface PastTrade {
   id: string;
   symbol: string;
+  instrumentKey?: string;
+  timeframe?: string;
+  evaluatedRange?: string;
   tier: '3-CANDLE';
   status: 'OPEN' | 'CLOSED';
   entryTime: number;
@@ -38,6 +44,7 @@ export interface PastTrade {
   pnlAmount: number;
   durationBars: number;
   currencySymbol: string;
+  isProvisional?: boolean;
 }
 
 export interface StrategyTelemetry {
@@ -65,114 +72,68 @@ export interface StrategySummary {
   description: string;
   currentTrend: 'BULLISH' | 'NEUTRAL';
   lastSignal: StrategySignal | null;
-  winRate: number;
+  winRate: number | null; // null represents N/A when totalClosedTrades === 0
   totalSignals: number;
   profitableTrades: number;
+  totalClosedTrades: number;
+  timeframeWarning?: string;
   markers: StrategyMarker[];
   activeSignals: StrategySignal[];
   telemetry?: StrategyTelemetry;
   trades: PastTrade[];
 }
 
-/**
- * Wilder's Smoothing (ta.rma in PineScript)
- */
-function calculateRMA(values: number[], length: number): number[] {
-  const result: number[] = new Array(values.length).fill(0);
-  if (values.length < length) return result;
-
-  let sum = 0;
-  for (let i = 0; i < length; i++) {
-    sum += values[i];
-  }
-  result[length - 1] = sum / length;
-
-  for (let i = length; i < values.length; i++) {
-    result[i] = (values[i] + (length - 1) * result[i - 1]) / length;
-  }
-  return result;
-}
-
-/**
- * Calculates EMA series
- */
-function calculateEMASeries(values: number[], period: number): number[] {
-  const result: number[] = new Array(values.length).fill(0);
-  if (values.length < period) return result;
-
-  let sum = 0;
-  for (let i = 0; i < period; i++) {
-    sum += values[i];
-  }
-  result[period - 1] = sum / period;
-
-  const k = 2 / (period + 1);
-  for (let i = period; i < values.length; i++) {
-    result[i] = values[i] * k + result[i - 1] * (1 - k);
-  }
-  return result;
-}
-
-/**
- * Calculates SMA series
- */
-function calculateSMASeries(values: number[], period: number): number[] {
-  const result: number[] = new Array(values.length).fill(0);
-  if (values.length < period) return result;
-
-  let sum = 0;
-  for (let i = 0; i < period; i++) {
-    sum += values[i];
-    if (i === period - 1) {
-      result[i] = sum / period;
-    }
-  }
-
-  for (let i = period; i < values.length; i++) {
-    sum += values[i] - values[i - period];
-    result[i] = sum / period;
-  }
-  return result;
-}
-
-import { formatDateTimeWithZone, DEFAULT_TIMEZONE } from './timezones';
-
 export function formatISTTime(unixSec: number, timezone = DEFAULT_TIMEZONE): string {
   return formatDateTimeWithZone(unixSec, timezone);
 }
 
 /**
- * Universal implementation of User's PineScript V5 Strategy:
- * "Custom 3-Candle Buy Strategy - Sequential (C1=-2 C2=-1 C3=0)"
- * Applied seamlessly to ALL stocks (Indian Equities, Indices, US Stocks).
- *
- * Exact PineScript Rules:
- * - C1 (bar[2]): EMA 8 > EMA 16 (or cross), RSI < 70, DPO > -2.5
- * - C2 (bar[1]): Vol C2 >= highestVolToday[2] (or surge), RSI 70-80, Vol C2 > Vol C1, DPO C2 > 0 and > DPO C1, ADX > 22, Acc/Dist C2 > C1
- * - C3 (bar[0]): Vol C3 > Vol C1 and Vol C3 != Vol C2, DPO C3 > DPO C2 and DPO C3 > 0, ADX > 22, Acc/Dist C3 > C2, RSI > 75
- * - Exits:
- *   1) 2% Limit Take Profit
- *   2) Green-High Tracker Exit: close > open and high > prev_highest
- * - Pyramiding = 999 (Allows sequential entries across all stocks)
- * - Secondary Tier: EMA 8/16 Bullish Momentum confirmation for all stocks
+ * Strategy Assumptions & Documentation:
+ * - Timeframe: Calibrated for 5m. Non-5m intervals issue a warning.
+ * - Position sizing: 1 unit fixed per entry, zero slippage/commission modelled.
+ * - Order fills: TP limit exit assumes fill at exact target (2% above entry).
+ * - Priority: Exits are evaluated before new entries on each bar.
+ * - Win Rule: Strictly pnl > 0 (exitPrice > entryPrice).
+ * - Break-even treatment: Trades with pnl === 0 are counted as closed trades, but not as wins.
+ * - Differences from PineScript: Python/TS execution replaying closed bars; PineScript
+ *   real-time intrabar broker emulator behavior may differ on order fill sequencing.
  */
-export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: string = DEFAULT_TIMEZONE): StrategySummary {
-  const strategyName = 'Custom 3-Candle Buy Strategy - Sequential (C1=-2 C2=-1 C3=0)';
+export function evaluateStrategy(
+  candles: Candle[],
+  symbol?: string,
+  timeframe: Timeframe = '5m',
+  timezone: string = DEFAULT_TIMEZONE,
+  instrumentKey?: string,
+  evaluatedRange?: string
+): StrategySummary {
+  const strategyName = 'Custom 3-Candle Buy Strategy — Sequential (C1=-2 C2=-1 C3=0)';
   const description =
-    'Sequential 3-Candle Volume Breakout & EMA 8/16 Momentum Strategy applied to all stocks with +2% Target and Green-High tracking exit.';
+    'Sequential 3-Candle Volume Breakout & EMA 8/16 Momentum Strategy with +2% Target and Green-High tracking exit.';
 
-  const isUsSymbol = symbol?.toUpperCase().includes('US|') || symbol?.startsWith('AAPL') || symbol?.startsWith('TSLA') || symbol?.startsWith('NVDA');
+  const isUsSymbol =
+    symbol?.toUpperCase().includes('US|') ||
+    symbol?.startsWith('AAPL') ||
+    symbol?.startsWith('TSLA') ||
+    symbol?.startsWith('NVDA');
   const currencySymbol = isUsSymbol ? '$' : '₹';
 
-  if (!candles || candles.length < 15) {
+  const timeframeWarning =
+    timeframe !== '5m'
+      ? `Strategy calibrated for 5m timeframe. Current timeframe (${timeframe}) may yield uncalibrated breakout signals.`
+      : undefined;
+
+  // Minimum candles required to warm up EMA16, RSI14, DPO20, and ADX14 (warm-up through candle 26)
+  if (!candles || candles.length < 28) {
     return {
       name: strategyName,
       description,
       currentTrend: 'NEUTRAL',
       lastSignal: null,
-      winRate: 78,
+      winRate: null,
       totalSignals: 0,
       profitableTrades: 0,
+      totalClosedTrades: 0,
+      timeframeWarning,
       markers: [],
       activeSignals: [],
       trades: [],
@@ -186,66 +147,18 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
   const opens = candles.map((c) => c.open);
   const volumes = candles.map((c) => c.volume);
 
-  // 1. Indicators Calculation
-  const ema8 = calculateEMASeries(closes, 8);
-  const ema16 = calculateEMASeries(closes, 16);
+  // Compute canonical indicators sharing exact formulas with chart overlays
+  const ema8List = calculateEMA(candles, 8);
+  const ema16List = calculateEMA(candles, 16);
+  const rsiList = calculateRSI(candles, 14);
+  const dpoList = calculateDPO(candles, 20);
+  const adxList = calculateADX(candles, 14);
 
-  // RSI 14 (Wilder's Smoothing)
-  const gains: number[] = new Array(n).fill(0);
-  const losses: number[] = new Array(n).fill(0);
-  for (let i = 1; i < n; i++) {
-    const diff = closes[i] - closes[i - 1];
-    gains[i] = diff > 0 ? diff : 0;
-    losses[i] = diff < 0 ? Math.abs(diff) : 0;
-  }
-  const avgGain = calculateRMA(gains, 14);
-  const avgLoss = calculateRMA(losses, 14);
-  const rsi: number[] = new Array(n).fill(50);
-  for (let i = 14; i < n; i++) {
-    const loss = avgLoss[i];
-    const gain = avgGain[i];
-    if (loss === 0) {
-      rsi[i] = 100;
-    } else {
-      const rs = gain / loss;
-      rsi[i] = 100 - 100 / (1 + rs);
-    }
-  }
-
-  // DPO 20: close - ta.sma(close, 20)
-  const sma20 = calculateSMASeries(closes, 20);
-  const dpo: number[] = new Array(n).fill(0);
-  for (let i = 19; i < n; i++) {
-    dpo[i] = closes[i] - sma20[i];
-  }
-
-  // ADX 14
-  const tr: number[] = new Array(n).fill(0);
-  const plusDM: number[] = new Array(n).fill(0);
-  const minusDM: number[] = new Array(n).fill(0);
-  tr[0] = highs[0] - lows[0];
-  for (let i = 1; i < n; i++) {
-    const h = highs[i];
-    const l = lows[i];
-    const prevC = closes[i - 1];
-    tr[i] = Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC));
-
-    const upMove = h - highs[i - 1];
-    const downMove = lows[i - 1] - l;
-    plusDM[i] = upMove > downMove && upMove > 0 ? upMove : 0;
-    minusDM[i] = downMove > upMove && downMove > 0 ? downMove : 0;
-  }
-  const atr = calculateRMA(tr, 14);
-  const smPlus = calculateRMA(plusDM, 14);
-  const smMinus = calculateRMA(minusDM, 14);
-  const dx: number[] = new Array(n).fill(0);
-  for (let i = 14; i < n; i++) {
-    const pDI = atr[i] > 0 ? (100 * smPlus[i]) / atr[i] : 0;
-    const mDI = atr[i] > 0 ? (100 * smMinus[i]) / atr[i] : 0;
-    const denom = Math.max(pDI + mDI, 0.000001);
-    dx[i] = (100 * Math.abs(pDI - mDI)) / denom;
-  }
-  const adx = calculateRMA(dx, 14);
+  const ema8Map = new Map(ema8List.map((p) => [p.time, p.value]));
+  const ema16Map = new Map(ema16List.map((p) => [p.time, p.value]));
+  const rsiMap = new Map(rsiList.map((p) => [p.time, p.value]));
+  const dpoMap = new Map(dpoList.map((p) => [p.time, p.value]));
+  const adxMap = new Map(adxList.map((p) => [p.time, p.value]));
 
   // Accumulation/Distribution (A/D)
   const ad: number[] = new Array(n).fill(0);
@@ -260,14 +173,23 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
     ad[i] = cumAD;
   }
 
+  // 20-period Volume SMA for volume surge checks
+  const avgVol20: number[] = new Array(n).fill(0);
+  let volSum = 0;
+  for (let i = 0; i < n; i++) {
+    volSum += volumes[i];
+    if (i >= 20) volSum -= volumes[i - 20];
+    if (i >= 19) avgVol20[i] = volSum / 20;
+  }
+
   // Daily highest volume tracking
   const highestVolToday: number[] = new Array(n).fill(0);
-  const avgVol20 = calculateSMASeries(volumes, 20);
+  const sessionTz = isUsSymbol ? 'America/New_York' : 'Asia/Kolkata';
   let curDay = '';
   let curMaxVol = 0;
   for (let i = 0; i < n; i++) {
     const dayStr = new Date(candles[i].time * 1000).toLocaleDateString('en-CA', {
-      timeZone: 'Asia/Kolkata',
+      timeZone: sessionTz,
     });
     if (dayStr !== curDay) {
       curDay = dayStr;
@@ -278,7 +200,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
     highestVolToday[i] = curMaxVol;
   }
 
-  // 2. Sequential Evaluation
+  // Evaluation structures
   const markers: StrategyMarker[] = [];
   const signals: StrategySignal[] = [];
   const trades: PastTrade[] = [];
@@ -300,9 +222,12 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
   let totalClosedTrades = 0;
   let lastEntryIndex = -999;
 
-  for (let i = 18; i < n; i++) {
+  // Replay closed bars: index 0 to n-2. Forming bar is evaluated separately.
+  const closedCount = n > 1 ? n - 1 : n;
+
+  for (let i = 26; i < closedCount; i++) {
     // ----------------------------------------------------
-    // CHECK EXITS FOR ALL OPEN POSITIONS
+    // 1. EXITS EVALUATED FIRST (TP priority before entries)
     // ----------------------------------------------------
     if (openPositions.length > 0) {
       if (!trackingHighs) {
@@ -311,15 +236,20 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
         prevHighest = trackedHigh;
       }
 
-      // 1) 2% Take Profit limit check
+      // 1) 2% Take Profit Limit Exit Check
       const closedPosIndices: number[] = [];
       for (let p = 0; p < openPositions.length; p++) {
         const pos = openPositions[p];
         if (highs[i] >= pos.tp) {
           totalClosedTrades++;
-          profitableTrades++;
           const exitPrice = pos.tp;
-          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+          const isProfitable = exitPrice > pos.entryPrice;
+          if (isProfitable) profitableTrades++;
+
+          const pnlPercent =
+            pos.entryPrice > 0
+              ? Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2))
+              : 0;
           const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
           const durationBars = i - pos.entryIndex;
 
@@ -345,61 +275,79 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
           closedPosIndices.push(p);
         }
       }
+
       for (let idx = closedPosIndices.length - 1; idx >= 0; idx--) {
         openPositions.splice(closedPosIndices[idx], 1);
       }
 
-      // 2) Green-High Exit: (close > open) and (high > prev_highest)
-      const isGreen = closes[i] > opens[i];
-      const isHigherThanPrev = highs[i] > prevHighest;
-
-      if (isGreen && isHigherThanPrev && openPositions.length > 0) {
-        const exitPrice = closes[i];
-        for (const pos of openPositions) {
-          totalClosedTrades++;
-          const isProfitable = exitPrice >= pos.entryPrice;
-          if (isProfitable) {
-            profitableTrades++;
-          }
-          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
-          const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
-          const durationBars = i - pos.entryIndex;
-
-          if (trades[pos.tradeIndex]) {
-            trades[pos.tradeIndex].status = 'CLOSED';
-            trades[pos.tradeIndex].exitTime = candles[i].time;
-            trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time, timezone);
-            trades[pos.tradeIndex].exitPrice = exitPrice;
-            trades[pos.tradeIndex].exitReason = 'Green-High Tracker Exit';
-            trades[pos.tradeIndex].pnlPercent = pnlPercent;
-            trades[pos.tradeIndex].pnlAmount = pnlAmount;
-            trades[pos.tradeIndex].durationBars = durationBars;
-          }
-        }
-        markers.push({
-          time: candles[i].time,
-          position: 'aboveBar',
-          color: '#f59e0b',
-          shape: 'circle',
-          text: `GREEN HIGH EXIT @ ${currencySymbol}${closes[i].toFixed(1)}`,
-          size: 1,
-        });
-
-        openPositions.length = 0;
+      // Reset tracker state immediately if TP closed all positions
+      if (openPositions.length === 0) {
         trackingHighs = false;
         trackedHigh = 0;
         prevHighest = 0;
       }
 
-      // 3) Protective Invalidation Exit (if held for > 40 bars)
+      // 2) Green-High Tracker Exit
+      if (openPositions.length > 0) {
+        // Refresh prevHighest from trackedHigh before the green-high comparison
+        prevHighest = trackedHigh;
+        const isGreen = closes[i] > opens[i];
+        const isHigherThanPrev = highs[i] > prevHighest;
+
+        if (isGreen && isHigherThanPrev) {
+          const exitPrice = closes[i];
+          for (const pos of openPositions) {
+            totalClosedTrades++;
+            const isProfitable = exitPrice > pos.entryPrice;
+            if (isProfitable) profitableTrades++;
+
+            const pnlPercent =
+              pos.entryPrice > 0
+                ? Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2))
+                : 0;
+            const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
+            const durationBars = i - pos.entryIndex;
+
+            if (trades[pos.tradeIndex]) {
+              trades[pos.tradeIndex].status = 'CLOSED';
+              trades[pos.tradeIndex].exitTime = candles[i].time;
+              trades[pos.tradeIndex].exitTimeString = formatISTTime(candles[i].time, timezone);
+              trades[pos.tradeIndex].exitPrice = exitPrice;
+              trades[pos.tradeIndex].exitReason = 'Green-High Tracker Exit';
+              trades[pos.tradeIndex].pnlPercent = pnlPercent;
+              trades[pos.tradeIndex].pnlAmount = pnlAmount;
+              trades[pos.tradeIndex].durationBars = durationBars;
+            }
+          }
+
+          markers.push({
+            time: candles[i].time,
+            position: 'aboveBar',
+            color: '#f59e0b',
+            shape: 'circle',
+            text: `GREEN HIGH EXIT @ ${currencySymbol}${closes[i].toFixed(1)}`,
+            size: 1,
+          });
+
+          openPositions.length = 0;
+          trackingHighs = false;
+          trackedHigh = 0;
+          prevHighest = 0;
+        }
+      }
+
+      // 3) Protective Max-Hold Invalidation Exit (40 bars)
       if (openPositions.length > 0 && i - openPositions[0].entryIndex > 40) {
         const exitPrice = closes[i];
         for (const pos of openPositions) {
           totalClosedTrades++;
-          const isProfitable = exitPrice >= pos.entryPrice;
+          const isProfitable = exitPrice > pos.entryPrice;
           if (isProfitable) profitableTrades++;
 
-          const pnlPercent = Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+          const pnlPercent =
+            pos.entryPrice > 0
+              ? Number((((exitPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2))
+              : 0;
           const pnlAmount = Number((exitPrice - pos.entryPrice).toFixed(2));
           const durationBars = i - pos.entryIndex;
 
@@ -421,7 +369,6 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
       }
 
       if (trackingHighs) {
-        prevHighest = trackedHigh;
         trackedHigh = Math.max(trackedHigh, highs[i]);
       }
     } else {
@@ -431,118 +378,146 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
     }
 
     // ----------------------------------------------------
-    // CHECK BUY CONDITIONS (C1 = i-2, C2 = i-1, C3 = i)
+    // 2. CHECK BUY CONDITIONS (C1 = i-2, C2 = i-1, C3 = i)
     // ----------------------------------------------------
     const c1 = i - 2;
     const c2 = i - 1;
     const c3 = i;
 
-    // ─────────────────────────────────────────────
-    // EXACT PINESCRIPT V5 CANDLE CONDITIONS
-    // ─────────────────────────────────────────────
-    // Candle 1 (Bar -2)
-    // ema_cross_c1 = ta.crossover(ema8_series, ema16_series)[2] or (ema8_c1 > ema16_c1)
-    // candle1_cond = (ema_cross_c1) and (rsi_c1 > 70) and (dpo_c1 > -2.5)
-    const emaCrossC1 =
-      (ema8[c1 - 1] <= ema16[c1 - 1] && ema8[c1] > ema16[c1]) || ema8[c1] > ema16[c1];
-    const candle1Cond = emaCrossC1 && rsi[c1] > 70 && dpo[c1] > -2.5;
+    // Gate entry strictly on indicator readiness across all 3 candles
+    const e8_c1 = ema8Map.get(candles[c1].time);
+    const e16_c1 = ema16Map.get(candles[c1].time);
+    const e8_c1_prev = ema8Map.get(candles[c1 - 1]?.time);
+    const e16_c1_prev = ema16Map.get(candles[c1 - 1]?.time);
+    const rsi_c1 = rsiMap.get(candles[c1].time);
+    const dpo_c1 = dpoMap.get(candles[c1].time);
 
-    // Candle 2 (Bar -1)
-    // highestVolToday_c2 = highestVolToday[2]
-    // candle2_cond = (vol_c2 >= highestVolToday_c2) and (rsi_c2 > 70 and rsi_c2 < 80) and
-    //                (vol_c2 > vol_c1) and (dpo_c2 > 0) and (dpo_c2 > dpo_c1) and
-    //                (adx_c2 > 22) and (ad_c2 > ad_c1)
-    const highestVolTodayC2 = highestVolToday[c1];
-    const volSurgeC2 =
-      volumes[c2] >= highestVolTodayC2 || volumes[c2] >= highestVolToday[c2] || (avgVol20[c2] > 0 && volumes[c2] >= avgVol20[c2] * 1.25);
-    const candle2Cond =
-      volSurgeC2 &&
-      rsi[c2] > 70 &&
-      rsi[c2] < 80 &&
-      volumes[c2] > volumes[c1] &&
-      dpo[c2] > 0 &&
-      dpo[c2] > dpo[c1] &&
-      adx[c2] > 22 &&
-      ad[c2] > ad[c1];
+    const rsi_c2 = rsiMap.get(candles[c2].time);
+    const dpo_c2 = dpoMap.get(candles[c2].time);
+    const adx_c2 = adxMap.get(candles[c2].time);
 
-    // Candle 3 (Bar 0)
-    // vol_condition_c3 = (vol_c3 > vol_c1) and (vol_c3 < vol_c2 or vol_c3 > vol_c2)
-    // candle3_cond = vol_condition_c3 and (dpo_c3 > dpo_c2) and (adx_c3 > 22) and
-    //                (ad_c3 > ad_c2) and (rsi_c3 > 75)
-    const volCondC3 =
-      volumes[c3] > volumes[c1] && (volumes[c3] < volumes[c2] || volumes[c3] > volumes[c2]);
-    const candle3Cond =
-      volCondC3 &&
-      dpo[c3] > dpo[c2] &&
-      adx[c3] > 22 &&
-      ad[c3] > ad[c2] &&
-      rsi[c3] > 75;
+    const rsi_c3 = rsiMap.get(candles[c3].time);
+    const dpo_c3 = dpoMap.get(candles[c3].time);
+    const adx_c3 = adxMap.get(candles[c3].time);
 
-    // Final Buy Condition (Exclusive & definitive PineScript strategy)
-    const finalBuyCondition = candle1Cond && candle2Cond && candle3Cond;
+    const isIndicatorsReady =
+      e8_c1 !== undefined &&
+      e16_c1 !== undefined &&
+      rsi_c1 !== undefined &&
+      dpo_c1 !== undefined &&
+      rsi_c2 !== undefined &&
+      dpo_c2 !== undefined &&
+      adx_c2 !== undefined &&
+      rsi_c3 !== undefined &&
+      dpo_c3 !== undefined &&
+      adx_c3 !== undefined;
 
-    // Pyramiding spacing: allow sequential entries up to 999 (matching PineScript pyramiding = 999)
-    const canEnter = (i - lastEntryIndex >= 2) && (openPositions.length < 999);
+    if (isIndicatorsReady) {
+      // Candle 1 (Bar -2)
+      const emaCrossC1 =
+        e8_c1_prev !== undefined && e16_c1_prev !== undefined
+          ? (e8_c1_prev <= e16_c1_prev && e8_c1 > e16_c1) || e8_c1 > e16_c1
+          : e8_c1 > e16_c1;
+      const candle1Cond = emaCrossC1 && rsi_c1 > 70 && dpo_c1 > -2.5;
 
-    if (canEnter && finalBuyCondition) {
-      const entryId = `BUY_${signals.length + 1}`;
-      const entryPrice = closes[c3];
-      const tp = Number((entryPrice * 1.02).toFixed(2));
-      lastEntryIndex = i;
+      // Candle 2 (Bar -1)
+      const highestVolTodayC2 = highestVolToday[c1];
+      const volSurgeC2 =
+        volumes[c2] >= highestVolTodayC2 ||
+        volumes[c2] >= highestVolToday[c2] ||
+        (avgVol20[c2] > 0 && volumes[c2] >= avgVol20[c2] * 1.25);
+      const candle2Cond =
+        volSurgeC2 &&
+        rsi_c2 > 70 &&
+        rsi_c2 < 80 &&
+        volumes[c2] > volumes[c1] &&
+        dpo_c2 > 0 &&
+        dpo_c2 > dpo_c1 &&
+        adx_c2 > 22 &&
+        ad[c2] > ad[c1];
 
-      markers.push({
-        time: candles[c3].time,
-        position: 'belowBar',
-        color: '#10b981',
-        shape: 'arrowUp',
-        text: `3-CANDLE BUY @ ${currencySymbol}${entryPrice.toFixed(1)}`,
-        size: 2,
-      });
+      // Candle 3 (Bar 0)
+      const volCondC3 =
+        volumes[c3] > volumes[c1] && (volumes[c3] < volumes[c2] || volumes[c3] > volumes[c2]);
+      const candle3Cond =
+        volCondC3 &&
+        dpo_c3 > dpo_c2 &&
+        adx_c3 > 22 &&
+        ad[c3] > ad[c2] &&
+        rsi_c3 > 75;
 
-      signals.push({
-        id: entryId,
-        type: 'BUY',
-        price: entryPrice,
-        time: candles[c3].time,
-        timeString: candles[c3].timeString,
-        targetPrice: tp,
-        tier: '3-CANDLE',
-      });
+      const finalBuyCondition = candle1Cond && candle2Cond && candle3Cond;
+      const canEnter = i - lastEntryIndex >= 2 && openPositions.length < 999;
 
-      const tradeRecord: PastTrade = {
-        id: entryId,
-        symbol: symbol || 'EQUITY',
-        tier: '3-CANDLE',
-        status: 'OPEN',
-        entryTime: candles[c3].time,
-        entryTimeString: formatISTTime(candles[c3].time, timezone),
-        entryPrice,
-        targetPrice: tp,
-        pnlPercent: 0,
-        pnlAmount: 0,
-        durationBars: 0,
-        currencySymbol,
-      };
-      const tradeIndex = trades.length;
-      trades.push(tradeRecord);
+      if (canEnter && finalBuyCondition) {
+        const entryId = `BUY_${signals.length + 1}`;
+        const entryPrice = closes[c3];
+        const tp = Number((entryPrice * 1.02).toFixed(2));
+        lastEntryIndex = i;
 
-      openPositions.push({
-        id: entryId,
-        entryIndex: c3,
-        entryPrice,
-        tp,
-        tier: '3-CANDLE',
-        tradeIndex,
-      });
+        markers.push({
+          time: candles[c3].time,
+          position: 'belowBar',
+          color: '#10b981',
+          shape: 'arrowUp',
+          text: `3-CANDLE BUY @ ${currencySymbol}${entryPrice.toFixed(1)}`,
+          size: 2,
+        });
+
+        signals.push({
+          id: entryId,
+          type: 'BUY',
+          price: entryPrice,
+          time: candles[c3].time,
+          timeString: candles[c3].timeString,
+          targetPrice: tp,
+          tier: '3-CANDLE',
+        });
+
+        const tradeRecord: PastTrade = {
+          id: entryId,
+          symbol: symbol || 'EQUITY',
+          instrumentKey,
+          timeframe,
+          evaluatedRange,
+          tier: '3-CANDLE',
+          status: 'OPEN',
+          entryTime: candles[c3].time,
+          entryTimeString: formatISTTime(candles[c3].time, timezone),
+          entryPrice,
+          targetPrice: tp,
+          pnlPercent: 0,
+          pnlAmount: 0,
+          durationBars: 0,
+          currencySymbol,
+        };
+        const tradeIndex = trades.length;
+        trades.push(tradeRecord);
+
+        openPositions.push({
+          id: entryId,
+          entryIndex: c3,
+          entryPrice,
+          tp,
+          tier: '3-CANDLE',
+          tradeIndex,
+        });
+      }
     }
   }
 
-  // Final check for still-open positions to compute live floating PnL
+  // ----------------------------------------------------
+  // 3. SEPARATE EVALUATION FOR LATEST FORMING BAR
+  // ----------------------------------------------------
   const lastIndex = n - 1;
   const livePrice = closes[lastIndex];
 
+  // Update floating trades
   for (const pos of openPositions) {
-    const pnlPercent = Number((((livePrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2));
+    const pnlPercent =
+      pos.entryPrice > 0
+        ? Number((((livePrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2))
+        : 0;
     const pnlAmount = Number((livePrice - pos.entryPrice).toFixed(2));
     const durationBars = lastIndex - pos.entryIndex;
 
@@ -556,35 +531,131 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
     }
   }
 
+  // Check forming bar for provisional signal
+  if (n > closedCount && n >= 28) {
+    const c1 = lastIndex - 2;
+    const c2 = lastIndex - 1;
+    const c3 = lastIndex;
+
+    const e8_c1 = ema8Map.get(candles[c1].time);
+    const e16_c1 = ema16Map.get(candles[c1].time);
+    const rsi_c1 = rsiMap.get(candles[c1].time);
+    const dpo_c1 = dpoMap.get(candles[c1].time);
+
+    const rsi_c2 = rsiMap.get(candles[c2].time);
+    const dpo_c2 = dpoMap.get(candles[c2].time);
+    const adx_c2 = adxMap.get(candles[c2].time);
+
+    const rsi_c3 = rsiMap.get(candles[c3].time);
+    const dpo_c3 = dpoMap.get(candles[c3].time);
+    const adx_c3 = adxMap.get(candles[c3].time);
+
+    if (
+      e8_c1 !== undefined &&
+      e16_c1 !== undefined &&
+      rsi_c1 !== undefined &&
+      dpo_c1 !== undefined &&
+      rsi_c2 !== undefined &&
+      dpo_c2 !== undefined &&
+      adx_c2 !== undefined &&
+      rsi_c3 !== undefined &&
+      dpo_c3 !== undefined &&
+      adx_c3 !== undefined
+    ) {
+      const c1Cond = e8_c1 > e16_c1 && rsi_c1 > 70 && dpo_c1 > -2.5;
+      const c2Cond =
+        rsi_c2 > 70 &&
+        rsi_c2 < 80 &&
+        volumes[c2] > volumes[c1] &&
+        dpo_c2 > 0 &&
+        dpo_c2 > dpo_c1 &&
+        adx_c2 > 22 &&
+        ad[c2] > ad[c1];
+      const c3Cond =
+        volumes[c3] > volumes[c1] &&
+        dpo_c3 > dpo_c2 &&
+        adx_c3 > 22 &&
+        ad[c3] > ad[c2] &&
+        rsi_c3 > 75;
+
+      if (c1Cond && c2Cond && c3Cond && lastIndex - lastEntryIndex >= 2) {
+        signals.push({
+          id: `PROVISIONAL_BUY_${signals.length + 1}`,
+          type: 'BUY',
+          price: livePrice,
+          time: candles[lastIndex].time,
+          timeString: candles[lastIndex].timeString,
+          targetPrice: Number((livePrice * 1.02).toFixed(2)),
+          tier: '3-CANDLE',
+          isProvisional: true,
+        });
+      }
+    }
+  }
+
   const lastSignal = signals.length > 0 ? signals[signals.length - 1] : null;
+
+  // Genuine win rate: strictly pnl > 0. Returns null when 0 closed trades exist.
   const winRate =
-    totalClosedTrades > 0
-      ? Math.round((profitableTrades / totalClosedTrades) * 100)
-      : 76;
+    totalClosedTrades > 0 ? Math.round((profitableTrades / totalClosedTrades) * 100) : null;
 
   // Active Live Bar Telemetry
   const lastPos = openPositions.length > 0 ? openPositions[openPositions.length - 1] : null;
-  const livePnLPercent = lastPos ? ((livePrice - lastPos.entryPrice) / lastPos.entryPrice) * 100 : undefined;
-  const tpDistancePercent = lastPos ? ((lastPos.tp - livePrice) / livePrice) * 100 : undefined;
+  const livePnLPercent =
+    lastPos && lastPos.entryPrice > 0
+      ? ((livePrice - lastPos.entryPrice) / lastPos.entryPrice) * 100
+      : undefined;
+  const tpDistancePercent =
+    lastPos && livePrice > 0 ? ((lastPos.tp - livePrice) / livePrice) * 100 : undefined;
+
+  const lastBarEma8 = ema8Map.get(candles[lastIndex].time) ?? 0;
+  const lastBarEma16 = ema16Map.get(candles[lastIndex].time) ?? 0;
+  const lastBarRsi = rsiMap.get(candles[lastIndex].time) ?? 50;
+  const lastBarDpo = dpoMap.get(candles[lastIndex].time) ?? 0;
+  const lastBarAdx = adxMap.get(candles[lastIndex].time) ?? 0;
+
+  const c1Idx = lastIndex - 2;
+  const c2Idx = lastIndex - 1;
+  const c3Idx = lastIndex;
+
+  const c1Passed =
+    c1Idx >= 0 &&
+    (ema8Map.get(candles[c1Idx].time) ?? 0) > (ema16Map.get(candles[c1Idx].time) ?? 0) &&
+    (rsiMap.get(candles[c1Idx].time) ?? 0) > 70 &&
+    (dpoMap.get(candles[c1Idx].time) ?? 0) > -2.5;
+
+  const c2Passed =
+    c2Idx >= 0 &&
+    (rsiMap.get(candles[c2Idx].time) ?? 0) > 70 &&
+    (rsiMap.get(candles[c2Idx].time) ?? 0) < 80 &&
+    (dpoMap.get(candles[c2Idx].time) ?? 0) > 0 &&
+    (adxMap.get(candles[c2Idx].time) ?? 0) > 22;
+
+  const c3Passed =
+    c3Idx >= 0 &&
+    (dpoMap.get(candles[c3Idx].time) ?? 0) > (dpoMap.get(candles[c2Idx].time) ?? 0) &&
+    (adxMap.get(candles[c3Idx].time) ?? 0) > 22 &&
+    (rsiMap.get(candles[c3Idx].time) ?? 0) > 75;
 
   const telemetry: StrategyTelemetry = {
     livePrice,
     currencySymbol,
-    ema8: Number((ema8[lastIndex] || 0).toFixed(2)),
-    ema16: Number((ema16[lastIndex] || 0).toFixed(2)),
-    rsi: Number((rsi[lastIndex] || 50).toFixed(1)),
-    dpo: Number((dpo[lastIndex] || 0).toFixed(2)),
-    adx: Number((adx[lastIndex] || 0).toFixed(1)),
-    c1Passed: (ema8[lastIndex - 2] > ema16[lastIndex - 2]) && (rsi[lastIndex - 2] > 70) && (dpo[lastIndex - 2] > -2.5),
-    c2Passed: (rsi[lastIndex - 1] > 70 && rsi[lastIndex - 1] < 80) && (dpo[lastIndex - 1] > 0) && (adx[lastIndex - 1] > 22),
-    c3Passed: (dpo[lastIndex] > dpo[lastIndex - 1]) && (adx[lastIndex] > 22) && (rsi[lastIndex] > 75),
+    ema8: Number(lastBarEma8.toFixed(2)),
+    ema16: Number(lastBarEma16.toFixed(2)),
+    rsi: Number(lastBarRsi.toFixed(1)),
+    dpo: Number(lastBarDpo.toFixed(2)),
+    adx: Number(lastBarAdx.toFixed(1)),
+    c1Passed: Boolean(c1Passed),
+    c2Passed: Boolean(c2Passed),
+    c3Passed: Boolean(c3Passed),
     hasOpenPosition: openPositions.length > 0,
     openPositionEntryPrice: lastPos?.entryPrice,
     openPositionTpPrice: lastPos?.tp,
     livePnLPercent: livePnLPercent !== undefined ? Number(livePnLPercent.toFixed(2)) : undefined,
     tpDistancePercent: tpDistancePercent !== undefined ? Number(tpDistancePercent.toFixed(2)) : undefined,
     isTakeProfitHit: lastPos ? highs[lastIndex] >= lastPos.tp : false,
-    isGreenHighExitHit: lastPos ? closes[lastIndex] > opens[lastIndex] && highs[lastIndex] > prevHighest : false,
+    isGreenHighExitHit:
+      lastPos ? closes[lastIndex] > opens[lastIndex] && highs[lastIndex] > prevHighest : false,
   };
 
   return {
@@ -592,9 +663,11 @@ export function evaluateStrategy(candles: Candle[], symbol?: string, timezone: s
     description,
     currentTrend: openPositions.length > 0 ? 'BULLISH' : 'NEUTRAL',
     lastSignal,
-    winRate: Math.max(winRate, 74),
+    winRate,
     totalSignals: signals.length,
     profitableTrades,
+    totalClosedTrades,
+    timeframeWarning,
     markers,
     activeSignals: signals,
     telemetry,

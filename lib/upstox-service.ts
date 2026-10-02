@@ -1,16 +1,20 @@
+import 'server-only';
 import { upstoxRequestQueue } from './rate-limiter';
-import { Candle, Timeframe } from './types';
+import { Candle, Timeframe, FailedRange } from './types';
+import {
+  formatDateYYYYMMDD,
+  calculateDateChunks,
+  dateStringToUtcSeconds,
+} from './date-utils';
+
+export { formatDateYYYYMMDD, calculateDateChunks };
 
 const UPSTOX_BASE_URL = 'https://api.upstox.com/v3';
-
-function apiError(message: string, status: number, retryAfter?: number): Error & { status: number; retryAfter?: number } {
-  return Object.assign(new Error(message), { status, ...(retryAfter === undefined ? {} : { retryAfter }) });
-}
 
 // Server-side helper to get token
 export function getUpstoxToken(): string | undefined {
   const token = process.env.UPSTOX_TOKEN;
-  if (!token || token.trim() === '' || token.includes('YOUR_ANALYTICS_TOKEN')) {
+  if (!token || token.trim() === '' || token.includes('YOUR_ANALYTICS_TOKEN') || token.includes('YOUR_UPSTOX_TOKEN_HERE')) {
     return undefined;
   }
   return token.trim();
@@ -41,85 +45,7 @@ export function mapTimeframeToUpstox(timeframe: Timeframe): { unit: string; inte
       return { unit: 'minutes', interval: 60 };
     case '1D':
       return { unit: 'days', interval: 1 };
-    default:
-      return { unit: 'minutes', interval: 5 };
   }
-}
-
-/**
- * Format a Date to YYYY-MM-DD
- */
-export function formatDateYYYYMMDD(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Calculate date chunks to comply with Upstox API range limits.
- * Minute data is typically restricted to 30 days per call.
- * Daily data can handle years in one call.
- */
-export function calculateDateChunks(
-  fromDateStr: string,
-  toDateStr: string,
-  timeframe: Timeframe
-): { from: string; to: string }[] {
-  const fromDate = new Date(fromDateStr);
-  const toDate = new Date(toDateStr);
-
-  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime()) || fromDate > toDate) {
-    return [{ from: fromDateStr, to: toDateStr }];
-  }
-
-  // Daily candles can be fetched up to 365 days or more in a single call
-  if (timeframe === '1D') {
-    const diffDays = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays <= 365) {
-      return [{ from: fromDateStr, to: toDateStr }];
-    }
-
-    const chunks: { from: string; to: string }[] = [];
-    let currentTo = new Date(toDate);
-
-    while (currentTo > fromDate) {
-      const currentFrom = new Date(currentTo);
-      currentFrom.setDate(currentFrom.getDate() - 365);
-      const effectiveFrom = currentFrom < fromDate ? fromDate : currentFrom;
-
-      chunks.push({
-        from: formatDateYYYYMMDD(effectiveFrom),
-        to: formatDateYYYYMMDD(currentTo),
-      });
-
-      currentTo = new Date(effectiveFrom);
-      currentTo.setDate(currentTo.getDate() - 1);
-    }
-
-    return chunks;
-  }
-
-  // Minute candles: split into 28-day chunks
-  const maxChunkDays = 28;
-  const chunks: { from: string; to: string }[] = [];
-  let currentTo = new Date(toDate);
-
-  while (currentTo >= fromDate) {
-    const currentFrom = new Date(currentTo);
-    currentFrom.setDate(currentFrom.getDate() - maxChunkDays);
-    const effectiveFrom = currentFrom < fromDate ? fromDate : currentFrom;
-
-    chunks.push({
-      from: formatDateYYYYMMDD(effectiveFrom),
-      to: formatDateYYYYMMDD(currentTo),
-    });
-
-    currentTo = new Date(effectiveFrom);
-    currentTo.setDate(currentTo.getDate() - 1);
-  }
-
-  return chunks;
 }
 
 /**
@@ -136,8 +62,29 @@ interface UpstoxCandleResponse {
   errors?: { errorCode?: string; message?: string }[];
 }
 
+export interface CandleFetchResult {
+  candles: Candle[];
+  partial?: boolean;
+  failedRanges?: FailedRange[];
+}
+
+export class UpstoxApiError extends Error {
+  status: number;
+  retryAfter?: number;
+  code?: string;
+
+  constructor(message: string, status = 500, retryAfter?: number, code?: string) {
+    super(message);
+    this.name = 'UpstoxApiError';
+    this.status = status;
+    this.retryAfter = retryAfter;
+    this.code = code;
+  }
+}
+
 /**
- * Normalizes and converts raw Upstox candles to dashboard format
+ * Normalizes and converts raw Upstox candles to dashboard format.
+ * Preserves candle sorting, deduplication, and intraday precedence.
  */
 export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
   if (!Array.isArray(rawCandles) || rawCandles.length === 0) {
@@ -168,7 +115,6 @@ export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
       openInterest: Number(oi) || 0,
     };
 
-    // Ensure valid prices
     if (
       !isNaN(candle.open) &&
       !isNaN(candle.high) &&
@@ -179,9 +125,8 @@ export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
     }
   }
 
-  // Sort chronologically ascending (oldest to newest)
-  const sorted = Array.from(map.values()).sort((a, b) => a.time - b.time);
-  return sorted;
+  // Sort chronologically ascending
+  return Array.from(map.values()).sort((a, b) => a.time - b.time);
 }
 
 /**
@@ -192,53 +137,83 @@ async function fetchHistoricalChunk(
   unit: string,
   interval: number,
   toDate: string,
-  fromDate: string
+  fromDate: string,
+  signal?: AbortSignal
 ): Promise<UpstoxRawCandle[]> {
   const token = getUpstoxToken();
+  if (!token) {
+    throw new UpstoxApiError('Upstox API token is not configured', 401);
+  }
+
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
   };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
 
   const encodedKey = encodeURIComponent(instrumentKey);
   const url = `${UPSTOX_BASE_URL}/historical-candle/${encodedKey}/${unit}/${interval}/${toDate}/${fromDate}`;
 
   return upstoxRequestQueue.enqueue(async () => {
-    const res = await fetch(url, { headers });
-
-    if (res.status === 429) {
-      const retryAfterHeader = res.headers.get('Retry-After');
-      const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
-      throw apiError('Upstox API rate limit reached', 429, retryAfter);
+    if (signal?.aborted) {
+      throw new Error('Request aborted');
     }
 
-    if (res.status === 401 || res.status === 403) {
-      throw apiError('Upstox token invalid or unauthorized', res.status);
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => timeoutController.abort(), 10000);
+
+    // Combine request signal with timeout signal
+    const onAbort = () => timeoutController.abort();
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    if (!res.ok) {
-      const text = await res.text();
-      let errorMsg = `Upstox API error: HTTP ${res.status}`;
-      try {
-        const json = JSON.parse(text);
-        if (json.errors?.[0]?.message) {
-          errorMsg = json.errors[0].message;
-        }
-      } catch {
-        // use default message
+    try {
+      const res = await fetch(url, {
+        headers,
+        signal: timeoutController.signal,
+      });
+
+      if (res.status === 429) {
+        const retryAfterHeader = res.headers.get('Retry-After');
+        const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
+        throw new UpstoxApiError('Upstox API rate limit reached', 429, retryAfter);
       }
-      throw apiError(errorMsg, res.status);
-    }
 
-    const data: UpstoxCandleResponse = await res.json();
-    if (data.status === 'success' && data.data?.candles) {
-      return data.data.candles;
-    }
+      if (res.status === 401 || res.status === 403) {
+        throw new UpstoxApiError('Upstox API token is invalid or unauthorized', res.status);
+      }
 
-    return [];
+      if (res.status === 404) {
+        // Known no-data response (empty interval / holiday)
+        return [];
+      }
+
+      if (!res.ok) {
+        let errorMsg = `Upstox API error: HTTP ${res.status}`;
+        try {
+          const text = await res.text();
+          const json = JSON.parse(text);
+          if (json.errors?.[0]?.message) {
+            errorMsg = json.errors[0].message;
+          }
+        } catch {
+          // ignore parsing error
+        }
+        throw new UpstoxApiError(errorMsg, res.status);
+      }
+
+      const data: UpstoxCandleResponse = await res.json();
+      if (data.status === 'success' && data.data?.candles) {
+        return data.data.candles;
+      }
+
+      return [];
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    }
   });
 }
 
@@ -248,93 +223,177 @@ async function fetchHistoricalChunk(
 async function fetchIntraday(
   instrumentKey: string,
   unit: string,
-  interval: number
+  interval: number,
+  signal?: AbortSignal
 ): Promise<UpstoxRawCandle[]> {
   const token = getUpstoxToken();
+  if (!token) {
+    throw new UpstoxApiError('Upstox API token is not configured', 401);
+  }
+
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
   };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
 
   const encodedKey = encodeURIComponent(instrumentKey);
   const url = `${UPSTOX_BASE_URL}/historical-candle/intraday/${encodedKey}/${unit}/${interval}`;
 
   return upstoxRequestQueue.enqueue(async () => {
-    const res = await fetch(url, { headers });
-
-    if (res.status === 429) {
-      throw apiError('Upstox API rate limit reached', 429);
+    if (signal?.aborted) {
+      throw new Error('Request aborted');
     }
 
-    if (!res.ok) {
-      // Intraday may be empty outside market hours or return 404/400
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => timeoutController.abort(), 10000);
+
+    const onAbort = () => timeoutController.abort();
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      const res = await fetch(url, {
+        headers,
+        signal: timeoutController.signal,
+      });
+
+      if (res.status === 429) {
+        const retryAfterHeader = res.headers.get('Retry-After');
+        const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
+        throw new UpstoxApiError('Upstox API rate limit reached', 429, retryAfter);
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        throw new UpstoxApiError('Upstox token invalid or unauthorized', res.status);
+      }
+
+      if (res.status === 404) {
+        // Intraday may be empty outside market hours or return 404 (known no-data)
+        return [];
+      }
+
+      if (!res.ok) {
+        let errorMsg = `Upstox API error: HTTP ${res.status}`;
+        try {
+          const text = await res.text();
+          const json = JSON.parse(text);
+          if (json.errors?.[0]?.message) {
+            errorMsg = json.errors[0].message;
+          }
+        } catch {
+          // ignore parse error
+        }
+        throw new UpstoxApiError(errorMsg, res.status);
+      }
+
+      const data: UpstoxCandleResponse = await res.json();
+      if (data.status === 'success' && data.data?.candles) {
+        return data.data.candles;
+      }
+
       return [];
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
     }
-
-    const data: UpstoxCandleResponse = await res.json();
-    if (data.status === 'success' && data.data?.candles) {
-      return data.data.candles;
-    }
-
-    return [];
   });
 }
 
 /**
  * Unified high-level candle fetcher with automatic chunking, intraday stitching,
- * deduplication, and sorting.
+ * deduplication, and bounds filtering.
  */
 export async function fetchCandleRange(
   instrumentKey: string,
   timeframe: Timeframe,
   fromDateStr: string,
   toDateStr: string,
-  includeIntraday = true
-): Promise<Candle[]> {
+  includeIntraday = true,
+  signal?: AbortSignal
+): Promise<CandleFetchResult> {
   if (!instrumentKey) {
-    throw new Error('Instrument key is required');
+    throw new UpstoxApiError('Missing required parameter: instrumentKey', 400);
   }
 
   const { unit, interval } = mapTimeframeToUpstox(timeframe);
   const chunks = calculateDateChunks(fromDateStr, toDateStr, timeframe);
 
   const rawCandles: UpstoxRawCandle[] = [];
+  const failedRanges: FailedRange[] = [];
+  let successfulChunksCount = 0;
 
-  // Fetch chunks (sequential or controlled concurrency through queue)
+  // Fetch chunks sequentially through queue with signal propagation
   for (const chunk of chunks) {
+    if (signal?.aborted) {
+      throw new Error('Request aborted');
+    }
+
     try {
       const chunkCandles = await fetchHistoricalChunk(
         instrumentKey,
         unit,
         interval,
         chunk.to,
-        chunk.from
+        chunk.from,
+        signal
       );
       rawCandles.push(...chunkCandles);
+      successfulChunksCount++;
     } catch (err: unknown) {
-      const status = typeof err === 'object' && err !== null && 'status' in err ? err.status : undefined;
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`Failed fetching chunk ${chunk.from} to ${chunk.to} for ${instrumentKey}:`, message);
-      // If single chunk fails due to no data on holidays, continue to next chunk
-      if (status !== 401 && status !== 429) {
-        continue;
+      const upstoxErr = err as UpstoxApiError;
+      const status = upstoxErr?.status;
+
+      // Always propagate auth and rate-limit errors immediately
+      if (status === 401 || status === 403 || status === 429) {
+        throw err;
       }
-      throw err;
+
+      console.warn(`Failed fetching chunk ${chunk.from} to ${chunk.to} for ${instrumentKey}:`, upstoxErr?.message);
+      failedRanges.push({
+        from: chunk.from,
+        to: chunk.to,
+        reason: upstoxErr?.message || 'Chunk fetch failed',
+      });
     }
   }
 
-  // Fetch intraday if requested (for current day data)
-  if (includeIntraday) {
+  // If all chunks failed and we have no candles, propagate error
+  if (chunks.length > 0 && successfulChunksCount === 0 && failedRanges.length > 0) {
+    throw new UpstoxApiError(failedRanges[0].reason || 'All historical chunks failed', 502);
+  }
+
+  // Check if today falls inside exchange-local requested range (Asia/Kolkata for Indian stocks)
+  const todayIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const isTodayInRange = todayIST >= fromDateStr && todayIST <= toDateStr;
+
+  // Fetch intraday if requested and today is within range
+  if (includeIntraday && isTodayInRange) {
     try {
-      const intradayCandles = await fetchIntraday(instrumentKey, unit, interval);
+      const intradayCandles = await fetchIntraday(instrumentKey, unit, interval, signal);
+      // Intraday candles take precedence on duplicate timestamps
       rawCandles.push(...intradayCandles);
-    } catch {
-      // Intraday fetch failure is non-fatal when historical data is present
+    } catch (err: unknown) {
+      const upstoxErr = err as UpstoxApiError;
+      if (upstoxErr?.status === 401 || upstoxErr?.status === 403 || upstoxErr?.status === 429) {
+        throw err;
+      }
+      console.warn(`Intraday fetch failed for ${instrumentKey}:`, upstoxErr?.message);
     }
   }
 
-  return normalizeCandles(rawCandles);
+  const normalized = normalizeCandles(rawCandles);
+
+  // Filter merged candles strictly to bounds [fromSec, toSec + 86399]
+  const fromSec = dateStringToUtcSeconds(fromDateStr);
+  const toSecEnd = dateStringToUtcSeconds(toDateStr) + 86399;
+  const filtered = normalized.filter((c) => c.time >= fromSec && c.time <= toSecEnd);
+
+  return {
+    candles: filtered,
+    partial: failedRanges.length > 0,
+    failedRanges: failedRanges.length > 0 ? failedRanges : undefined,
+  };
 }

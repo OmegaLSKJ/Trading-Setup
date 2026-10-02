@@ -1,14 +1,5 @@
-export interface LiveTick {
-  instrumentKey: string;
-  price: number;
-  open?: number;
-  high?: number;
-  low?: number;
-  close: number;
-  volumeDelta: number;
-  timestamp: number; // Unix seconds
-  direction: 'UP' | 'DOWN' | 'EQUAL';
-}
+import { LiveTick } from './types';
+export type { LiveTick };
 
 type LiveTickListener = (tick: LiveTick) => void;
 
@@ -17,6 +8,7 @@ class LiveStreamManager {
   private eventSource: EventSource | null = null;
   private subscribedKeys: Set<string> = new Set();
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private connectionGeneration = 0;
 
   public subscribe(instrumentKey: string, listener: LiveTickListener): () => void {
     if (!this.listeners.has(instrumentKey)) {
@@ -73,6 +65,7 @@ class LiveStreamManager {
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     this.reconnectTimer = setTimeout(() => {
@@ -81,6 +74,12 @@ class LiveStreamManager {
   }
 
   private connect() {
+    // Clear any pending retry timer on active connect
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.subscribedKeys.size === 0) {
       if (this.eventSource) {
         this.eventSource.close();
@@ -94,28 +93,38 @@ class LiveStreamManager {
       this.eventSource = null;
     }
 
+    const currentGen = ++this.connectionGeneration;
     const keys = Array.from(this.subscribedKeys).join(',');
     const url = `/api/live/stream?instruments=${encodeURIComponent(keys)}`;
 
     try {
-      this.eventSource = new EventSource(url);
+      const es = new EventSource(url);
+      this.eventSource = es;
 
-      this.eventSource.onmessage = (event) => {
+      es.onmessage = (event) => {
+        if (this.connectionGeneration !== currentGen) return;
         try {
           const data: LiveTick = JSON.parse(event.data);
           this.dispatchTick(data);
         } catch {
-          // ignore heartbeat / ping
+          // ignore heartbeat / non-JSON events
         }
       };
 
-      this.eventSource.onerror = () => {
+      es.onerror = () => {
+        if (this.connectionGeneration !== currentGen) return;
         if (this.eventSource) {
           this.eventSource.close();
           this.eventSource = null;
         }
-        // Auto-reconnect after 2 seconds
-        setTimeout(() => this.connect(), 2000);
+
+        // Single retry timer for reconnect
+        if (!this.reconnectTimer) {
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connect();
+          }, 2000);
+        }
       };
     } catch (e) {
       console.warn('Failed establishing SSE connection:', e);

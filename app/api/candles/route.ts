@@ -1,109 +1,108 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCandleRange, formatDateYYYYMMDD } from '@/lib/upstox-service';
-import { Candle, Timeframe } from '@/lib/types';
-import { allowApiRequest } from '@/lib/api-rate-limit';
+import { fetchCandleRange, UpstoxApiError } from '@/lib/upstox-service';
+import { Timeframe, Candle, CandleResponse } from '@/lib/types';
+import {
+  isValidCalendarDate,
+  dateStringToUtcSeconds,
+  calendarDaysBetween,
+  formatDateYYYYMMDD,
+} from '@/lib/date-utils';
 
-// Simple in-memory response cache for recent candle fetches (TTL = 15 seconds)
+export const dynamic = 'force-dynamic';
+
+const ALLOWED_TIMEFRAMES: Set<Timeframe> = new Set([
+  '1m',
+  '3m',
+  '5m',
+  '10m',
+  '15m',
+  '30m',
+  '1h',
+  '1D',
+]);
+
+// Bounded LRU cache for complete successful candle results (TTL = 15 seconds)
 interface CachedData {
   timestamp: number;
   candles: Candle[];
 }
 const candleCache = new Map<string, CachedData>();
 const CACHE_TTL_MS = 15_000;
-const MAX_CACHE_ENTRIES = 500;
-const VALID_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '10m', '15m', '30m', '1h', '1D'];
+const MAX_CACHE_ENTRIES = 200;
 
-function parseDate(value: string | null): string | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
-}
+// Single-flight in-progress fetch tracker
+const inFlightFetches = new Map<string, Promise<CandleResponse>>();
 
-interface YahooChartResult {
-  timestamp?: number[];
-  indicators?: { quote?: Array<{
-    open?: Array<number | null>;
-    high?: Array<number | null>;
-    low?: Array<number | null>;
-    close?: Array<number | null>;
-    volume?: Array<number | null>;
-  }> };
-}
+function aggregateCandles(candles: Candle[], targetIntervalSec: number): Candle[] {
+  if (candles.length === 0) return [];
+  const buckets = new Map<number, Candle[]>();
 
-function toCandleRows(result: YahooChartResult | undefined, timeframe: Timeframe, from: string, to: string): Candle[] {
-  const timestamps: number[] = result?.timestamp || [];
-  const quote = result?.indicators?.quote?.[0] || {};
-  const intervalMinutes: Record<Timeframe, number> = {
-    '1m': 1, '3m': 3, '5m': 5, '10m': 10, '15m': 15, '30m': 30, '1h': 60, '1D': 1440,
-  };
-  const targetSeconds = intervalMinutes[timeframe] * 60;
-  const start = Date.parse(`${from}T00:00:00Z`) / 1000;
-  const end = (Date.parse(`${to}T00:00:00Z`) / 1000) + 86400;
-  const buckets = new Map<number, Candle>();
-
-  for (let i = 0; i < timestamps.length; i++) {
-    const timestamp = timestamps[i];
-    const open = quote.open?.[i];
-    const high = quote.high?.[i];
-    const low = quote.low?.[i];
-    const close = quote.close?.[i];
-    if (timestamp < start || timestamp >= end || [open, high, low, close].some((v) => v == null || !Number.isFinite(Number(v)))) continue;
-
-    const time = timeframe === '1D' || timeframe === '1h'
-      ? timestamp
-      : Math.floor(timestamp / targetSeconds) * targetSeconds;
-    const current = buckets.get(time);
-    if (current) {
-      current.high = Math.max(current.high, Number(high));
-      current.low = Math.min(current.low, Number(low));
-      current.close = Number(close);
-      current.volume += Number(quote.volume?.[i]) || 0;
-    } else {
-      buckets.set(time, {
-        time,
-        timeString: new Date(time * 1000).toISOString(),
-        open: Number(open), high: Number(high), low: Number(low), close: Number(close),
-        volume: Number(quote.volume?.[i]) || 0,
-      });
-    }
+  for (const c of candles) {
+    const bucketTime = Math.floor(c.time / targetIntervalSec) * targetIntervalSec;
+    const list = buckets.get(bucketTime) || [];
+    list.push(c);
+    buckets.set(bucketTime, list);
   }
-  return [...buckets.values()].sort((a, b) => a.time - b.time);
+
+  const result: Candle[] = [];
+  for (const [time, list] of buckets.entries()) {
+    list.sort((a, b) => a.time - b.time);
+    const open = list[0].open;
+    const close = list[list.length - 1].close;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+
+    for (const b of list) {
+      if (b.high > high) high = b.high;
+      if (b.low < low) low = b.low;
+      volume += b.volume;
+    }
+
+    result.push({
+      time,
+      timeString: new Date(time * 1000).toISOString(),
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  return result.sort((a, b) => a.time - b.time);
 }
 
 export async function GET(request: NextRequest) {
-  if (!allowApiRequest(request, 'candles', 600)) {
-    return NextResponse.json({ success: false, error: 'Too many candle requests; try again shortly' }, { status: 429 });
-  }
   const { searchParams } = new URL(request.url);
   const instrumentKey = searchParams.get('instrumentKey');
-  const timeframeParam = searchParams.get('timeframe') || '5m';
-  if (!VALID_TIMEFRAMES.includes(timeframeParam as Timeframe)) {
-    return NextResponse.json({ success: false, error: 'Invalid timeframe' }, { status: 400 });
-  }
-  const timeframe = timeframeParam as Timeframe;
-  let from = parseDate(searchParams.get('from'));
-  let to = parseDate(searchParams.get('to'));
+  const rawTimeframe = searchParams.get('timeframe');
+  let from = searchParams.get('from');
+  let to = searchParams.get('to');
   const includeIntraday = searchParams.get('includeIntraday') !== 'false';
-  const rawFrom = searchParams.get('from');
-  const rawTo = searchParams.get('to');
-  if ((rawFrom && !from) || (rawTo && !to)) {
-    return NextResponse.json({ success: false, error: 'Dates must use YYYY-MM-DD and be valid calendar dates' }, { status: 400 });
-  }
 
-  if (!instrumentKey) {
+  // 1. Validate instrumentKey
+  if (!instrumentKey || instrumentKey.trim() === '') {
     return NextResponse.json(
-      { success: false, error: 'Missing required parameter: instrumentKey' },
+      { success: false, error: 'Missing required parameter: instrumentKey', candles: [] },
       { status: 400 }
     );
   }
-  if (instrumentKey.length > 160 || /[\r\n]/.test(instrumentKey)) {
-    return NextResponse.json({ success: false, error: 'Invalid instrumentKey' }, { status: 400 });
-  }
-  if (instrumentKey.startsWith('US|') && !/^US\|[A-Z0-9.^_-]{1,20}$/i.test(instrumentKey)) {
-    return NextResponse.json({ success: false, error: 'Invalid US ticker' }, { status: 400 });
-  }
 
-  // Default dates if omitted: past 30 days for minute charts, 1 year for daily
+  // 2. Validate timeframe strictly without fallback casting
+  if (!rawTimeframe || !ALLOWED_TIMEFRAMES.has(rawTimeframe as Timeframe)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Invalid timeframe '${rawTimeframe}'. Allowed values: 1m, 3m, 5m, 10m, 15m, 30m, 1h, 1D`,
+        candles: [],
+      },
+      { status: 400 }
+    );
+  }
+  const timeframe = rawTimeframe as Timeframe;
+
+  // 3. Default dates if omitted: past 30 days for minute charts, 1 year for daily
   const today = new Date();
   if (!to) {
     to = formatDateYYYYMMDD(today);
@@ -117,17 +116,47 @@ export async function GET(request: NextRequest) {
     }
     from = formatDateYYYYMMDD(fromDate);
   }
+
+  // 4. Strict calendar date validation
+  if (!isValidCalendarDate(from)) {
+    return NextResponse.json(
+      { success: false, error: `Invalid 'from' date format or calendar date: ${from}`, candles: [] },
+      { status: 400 }
+    );
+  }
+  if (!isValidCalendarDate(to)) {
+    return NextResponse.json(
+      { success: false, error: `Invalid 'to' date format or calendar date: ${to}`, candles: [] },
+      { status: 400 }
+    );
+  }
+
+  // 5. Date order validation
   if (from > to) {
-    return NextResponse.json({ success: false, error: 'from must be on or before to' }, { status: 400 });
+    return NextResponse.json(
+      { success: false, error: `'from' date (${from}) cannot be after 'to' date (${to})`, candles: [] },
+      { status: 400 }
+    );
+  }
+
+  // 6. Span limits per timeframe
+  const totalDays = calendarDaysBetween(from, to);
+  if (timeframe !== '1D' && totalDays > 366) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Requested range (${totalDays} days) exceeds maximum allowed span of 366 days for intraday timeframes.`,
+        candles: [],
+      },
+      { status: 400 }
+    );
   }
 
   const cacheKey = `${instrumentKey}_${timeframe}_${from}_${to}_${includeIntraday}`;
-  const cached = candleCache.get(cacheKey);
   const now = Date.now();
+  const cached = candleCache.get(cacheKey);
 
   if (cached && now - cached.timestamp < CACHE_TTL_MS) {
-    candleCache.delete(cacheKey);
-    candleCache.set(cacheKey, cached);
     return NextResponse.json({
       success: true,
       cached: true,
@@ -140,90 +169,141 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  try {
-    let candles: Candle[] = [];
+  // Single-flight deduplication
+  let fetchPromise = inFlightFetches.get(cacheKey);
+  if (!fetchPromise) {
+    fetchPromise = (async (): Promise<CandleResponse> => {
+      // US Stocks via Yahoo Finance
+      if (instrumentKey.startsWith('US|')) {
+        const ticker = instrumentKey.replace('US|', '').toUpperCase();
+        let yInterval = '5m';
+        let needAggregation = false;
+        let targetIntervalSec = 300;
 
-    // Support US Stocks (e.g. US|AAPL, US|TSLA, US|NVDA)
-    if (instrumentKey.startsWith('US|')) {
-      const ticker = instrumentKey.replace('US|', '').toUpperCase();
-      let yInterval = '5m';
-      let maxRange = 31;
+        switch (timeframe) {
+          case '1m':
+            yInterval = '1m';
+            break;
+          case '3m':
+            yInterval = '1m';
+            needAggregation = true;
+            targetIntervalSec = 180;
+            break;
+          case '5m':
+            yInterval = '5m';
+            break;
+          case '10m':
+            yInterval = '5m';
+            needAggregation = true;
+            targetIntervalSec = 600;
+            break;
+          case '15m':
+            yInterval = '15m';
+            break;
+          case '30m':
+            yInterval = '30m';
+            break;
+          case '1h':
+            yInterval = '60m';
+            break;
+          case '1D':
+            yInterval = '1d';
+            break;
+        }
 
-      switch (timeframe) {
-        case '1m':
-          yInterval = '1m';
-          maxRange = 7;
-          break;
-        case '5m':
-        case '10m':
-          yInterval = '5m';
-          maxRange = 60;
-          break;
-        case '3m':
-          yInterval = '1m';
-          maxRange = 7;
-          break;
-        case '15m':
-          yInterval = '15m';
-          maxRange = 60;
-          break;
-        case '30m':
-          yInterval = '30m';
-          maxRange = 60;
-          break;
-        case '1h':
-          yInterval = '60m';
-          maxRange = 730;
-          break;
-        case '1D':
-          yInterval = '1d';
-          maxRange = 3650;
-          break;
+        const period1 = dateStringToUtcSeconds(from);
+        const period2 = dateStringToUtcSeconds(to) + 86399;
+
+        const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+          ticker
+        )}?interval=${yInterval}&period1=${period1}&period2=${period2}`;
+
+        const yRes = await fetch(yUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          signal: request.signal,
+        });
+
+        if (!yRes.ok) {
+          throw new UpstoxApiError(
+            `Yahoo Finance upstream error: HTTP ${yRes.status} for ${ticker}`,
+            yRes.status >= 500 ? 502 : yRes.status
+          );
+        }
+
+        const yJson = await yRes.json();
+        const resObj = yJson.chart?.result?.[0];
+        if (!resObj) {
+          throw new UpstoxApiError(`Yahoo Finance returned no result for ${ticker}`, 404);
+        }
+
+        const timestamps: number[] = resObj.timestamp || [];
+        const quote = resObj.indicators?.quote?.[0] || {};
+        const parsedCandles: Candle[] = [];
+
+        for (let i = 0; i < timestamps.length; i++) {
+          const t = timestamps[i];
+          const o = quote.open?.[i];
+          const h = quote.high?.[i];
+          const l = quote.low?.[i];
+          const c = quote.close?.[i];
+          const v = quote.volume?.[i] || 0;
+
+          if (o !== null && h !== null && l !== null && c !== null && !isNaN(o)) {
+            parsedCandles.push({
+              time: t,
+              timeString: new Date(t * 1000).toISOString(),
+              open: Number(Number(o).toFixed(2)),
+              high: Number(Number(h).toFixed(2)),
+              low: Number(Number(l).toFixed(2)),
+              close: Number(Number(c).toFixed(2)),
+              volume: Number(v) || 0,
+            });
+          }
+        }
+
+        parsedCandles.sort((a, b) => a.time - b.time);
+        const finalCandles = needAggregation
+          ? aggregateCandles(parsedCandles, targetIntervalSec)
+          : parsedCandles;
+
+        return {
+          success: true,
+          candles: finalCandles,
+        };
       }
 
-      const requestedFrom = new Date(`${from}T00:00:00Z`);
-      const requestedTo = new Date(`${to}T00:00:00Z`);
-      const requestedDays = Math.ceil((requestedTo.getTime() - requestedFrom.getTime()) / 86400000) + 1;
-      if (requestedDays > maxRange) {
-        return NextResponse.json({ success: false, error: `Yahoo Finance supports up to ${maxRange} days for ${timeframe} data` }, { status: 400 });
-      }
-      const period1 = Math.floor(requestedFrom.getTime() / 1000);
-      const period2 = Math.floor((requestedTo.getTime() + 86400000) / 1000);
-      const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${yInterval}&period1=${period1}&period2=${period2}`;
-      const yRes = await fetch(yUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      });
-
-      if (yRes.ok) {
-        const yJson: unknown = await yRes.json();
-        const result = yJson && typeof yJson === 'object' && 'chart' in yJson && yJson.chart && typeof yJson.chart === 'object' && 'result' in yJson.chart && Array.isArray(yJson.chart.result)
-          ? yJson.chart.result[0] as YahooChartResult | undefined
-          : undefined;
-        candles = toCandleRows(result, timeframe, from, to);
-      } else {
-        throw new Error(`Yahoo Finance returned HTTP ${yRes.status}`);
-      }
-    } else {
       // Standard Indian Market Stocks via Upstox API
-      candles = await fetchCandleRange(
+      const result = await fetchCandleRange(
         instrumentKey,
         timeframe,
         from,
         to,
-        includeIntraday
+        includeIntraday,
+        request.signal
       );
-    }
 
-    candleCache.set(cacheKey, { timestamp: now, candles });
+      return {
+        success: true,
+        candles: result.candles,
+        partial: result.partial,
+        failedRanges: result.failedRanges,
+      };
+    })();
 
-    // Clean up old cache entries if map exceeds 500 items
-    for (const [key, value] of candleCache.entries()) {
-      if (now - value.timestamp >= CACHE_TTL_MS) candleCache.delete(key);
-    }
-    while (candleCache.size > MAX_CACHE_ENTRIES) {
-      const oldestKey = candleCache.keys().next().value;
-      if (!oldestKey) break;
-      candleCache.delete(oldestKey);
+    inFlightFetches.set(cacheKey, fetchPromise);
+  }
+
+  try {
+    const result = await fetchPromise;
+
+    // Cache ONLY complete successful results (never cache partial responses)
+    if (result.success && !result.partial && result.candles.length > 0) {
+      if (candleCache.size >= MAX_CACHE_ENTRIES) {
+        // Evict oldest entry
+        const oldestKey = candleCache.keys().next().value;
+        if (oldestKey) candleCache.delete(oldestKey);
+      }
+      candleCache.set(cacheKey, { timestamp: Date.now(), candles: result.candles });
     }
 
     return NextResponse.json({
@@ -233,31 +313,27 @@ export async function GET(request: NextRequest) {
       timeframe,
       from,
       to,
-      count: candles.length,
-      candles,
+      count: result.candles.length,
+      candles: result.candles,
+      partial: result.partial,
+      failedRanges: result.failedRanges,
     });
   } catch (err: unknown) {
-    const error = err instanceof Error ? err : new Error('Failed to fetch candle data');
-    const status = typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number' ? err.status : 500;
-    console.error(`Candles API error for ${instrumentKey}:`, error.message);
-
-    let readableError = error.message || 'Failed to fetch candle data from Upstox';
-
-    if (status === 429) {
-      readableError = 'Upstox rate limit reached. Retrying shortly...';
-    } else if (status === 401 || status === 403) {
-      readableError = 'Upstox API token is invalid or expired. Check your .env.local file.';
-    }
+    const errorObj = err as { status?: number; message?: string };
+    const status = errorObj.status || 500;
+    const message = errorObj.message || 'Failed to fetch candle data';
 
     return NextResponse.json(
       {
         success: false,
-        error: readableError,
+        error: message,
         instrumentKey,
         timeframe,
         candles: [],
       },
-      { status }
+      { status: status >= 400 && status < 600 ? status : 500 }
     );
+  } finally {
+    inFlightFetches.delete(cacheKey);
   }
 }

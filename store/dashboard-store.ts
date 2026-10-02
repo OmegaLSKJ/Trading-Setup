@@ -10,9 +10,14 @@ import {
   IndicatorConfig,
   AutoRefreshInterval,
   ConnectionStatus,
+  Exchange,
+  InstrumentSegment,
 } from '@/lib/types';
+
 import { PastTrade } from '@/lib/strategy';
 import { isValidTimezone, DEFAULT_TIMEZONE } from '@/lib/timezones';
+
+const SCHEMA_VERSION = '1.0';
 
 const DEFAULT_INDICATORS: IndicatorConfig = {
   ema8: true,
@@ -70,7 +75,45 @@ const INITIAL_CHARTS: ChartPanelState[] = DEFAULT_INSTRUMENTS.map((inst, idx) =>
   isExpanded: false,
 }));
 
+const ALLOWED_LAYOUT_MODES = new Set<LayoutGridMode>(['1', '2h', '2v', '4', '6', '8']);
+const ALLOWED_TIMEFRAMES = new Set<Timeframe>(['1m', '3m', '5m', '10m', '15m', '30m', '1h', '1D']);
+const ALLOWED_DATE_PRESETS = new Set<DateRangePreset>(['today', '5D', '1M', '3M', '6M', 'YTD', '1Y', 'custom']);
+const ALLOWED_REFRESH_INTERVALS = new Set<AutoRefreshInterval>([0, 5000, 10000, 30000, 60000]);
+
+function isValidInstrument(item: unknown): item is Instrument {
+  if (!item || typeof item !== 'object') return false;
+  const rec = item as Record<string, unknown>;
+  return (
+    typeof rec.instrument_key === 'string' &&
+    rec.instrument_key.length > 0 &&
+    typeof rec.trading_symbol === 'string' &&
+    typeof rec.name === 'string'
+  );
+}
+
+function isValidChartState(item: unknown): item is ChartPanelState {
+  if (!item || typeof item !== 'object') return false;
+  const rec = item as Record<string, unknown>;
+  return (
+    typeof rec.id === 'string' &&
+    isValidInstrument(rec.instrument) &&
+    ALLOWED_TIMEFRAMES.has(rec.timeframe as Timeframe) &&
+    ALLOWED_DATE_PRESETS.has(rec.dateRangePreset as DateRangePreset)
+  );
+}
+
+
+function safeLocalStorageSet(key: string, value: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore quota
+  }
+}
+
 interface DashboardState {
+  isHydrated: boolean;
   charts: ChartPanelState[];
   activeChartId: string;
   layoutMode: LayoutGridMode;
@@ -93,6 +136,7 @@ interface DashboardState {
   tradesModalSymbol: string | null;
   symbolTrades: Record<string, PastTrade[]>;
   targetTradeNavigation: { symbol: string; time: number; id: string } | null;
+  selectedTimezone: string;
 
   // Actions
   setActiveChartId: (id: string) => void;
@@ -106,10 +150,7 @@ interface DashboardState {
     customFrom?: string,
     customTo?: string
   ) => void;
-  toggleChartIndicator: (
-    chartId: string,
-    indicator: keyof IndicatorConfig
-  ) => void;
+  toggleChartIndicator: (chartId: string, indicator: keyof IndicatorConfig) => void;
   setChartExpanded: (chartId: string, isExpanded: boolean) => void;
   removeChart: (chartId: string) => void;
   addChart: (instrument?: Instrument) => void;
@@ -143,18 +184,14 @@ interface DashboardState {
   recordTradesForSymbol: (symbol: string, trades: PastTrade[]) => void;
   navigateToTrade: (symbol: string, time: number, id: string) => void;
   clearTradeNavigation: () => void;
-  // Timezone setting
-  selectedTimezone: string;
+
   setTimezone: (timezone: string) => void;
-
-  // Hydration from LocalStorage
   loadPersistedState: () => void;
-
-  // Global Strategy Application
   applyStrategyToAllCharts: (enable?: boolean) => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
+  isHydrated: false,
   charts: INITIAL_CHARTS,
   activeChartId: INITIAL_CHARTS[0].id,
   layoutMode: '4',
@@ -166,7 +203,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     timeframe: false,
     symbol: false,
   },
-  autoRefreshInterval: 0, // Manual by default
+  autoRefreshInterval: 0,
   connectionStatus: 'CONNECTED',
   connectionDetails: {
     latencyMs: 45,
@@ -182,9 +219,44 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   tradesModalSymbol: null,
   symbolTrades: {},
   targetTradeNavigation: null,
+  selectedTimezone: DEFAULT_TIMEZONE,
 
+  // Enforce one open modal at any given time
   setTradesModalOpen: (open, symbol = null) =>
-    set({ isTradesModalOpen: open, tradesModalSymbol: symbol }),
+    set({
+      isTradesModalOpen: open,
+      tradesModalSymbol: symbol,
+      isSymbolSearchOpen: false,
+      isLayoutModalOpen: false,
+      isSettingsModalOpen: false,
+    }),
+
+  openSymbolSearch: (targetChartId) =>
+    set((state) => ({
+      isSymbolSearchOpen: true,
+      targetChartForSearch: targetChartId || state.activeChartId,
+      isLayoutModalOpen: false,
+      isSettingsModalOpen: false,
+      isTradesModalOpen: false,
+    })),
+
+  closeSymbolSearch: () => set({ isSymbolSearchOpen: false, targetChartForSearch: null }),
+
+  setLayoutModalOpen: (open) =>
+    set({
+      isLayoutModalOpen: open,
+      isSymbolSearchOpen: false,
+      isSettingsModalOpen: false,
+      isTradesModalOpen: false,
+    }),
+
+  setSettingsModalOpen: (open) =>
+    set({
+      isSettingsModalOpen: open,
+      isSymbolSearchOpen: false,
+      isLayoutModalOpen: false,
+      isTradesModalOpen: false,
+    }),
 
   recordTradesForSymbol: (symbol, trades) =>
     set((state) => {
@@ -198,7 +270,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           lastExisting?.exitPrice === lastNew?.exitPrice &&
           lastExisting?.pnlAmount === lastNew?.pnlAmount
         ) {
-          return state; // No change, prevent store notification
+          return state;
         }
       }
       return {
@@ -211,7 +283,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   navigateToTrade: (symbol, time, id) => {
     const { charts, watchlist } = get();
-    // 1. Check if an existing chart is displaying this stock
     const existingChart = charts.find(
       (c) => c.instrument.trading_symbol.toUpperCase() === symbol.toUpperCase()
     );
@@ -223,7 +294,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         targetTradeNavigation: { symbol, time, id },
       });
     } else {
-      // Otherwise assign to active chart
       const activeId = get().activeChartId || charts[0]?.id;
       const targetInstrument =
         watchlist.find(
@@ -248,220 +318,132 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     }
   },
 
-  selectedTimezone: DEFAULT_TIMEZONE,
-  setTimezone: (timezone: string) => {
-    const validTz = isValidTimezone(timezone) ? timezone : DEFAULT_TIMEZONE;
-    set({ selectedTimezone: validTz });
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('upstox_timezone', validTz);
-    }
-  },
-
   clearTradeNavigation: () => set({ targetTradeNavigation: null }),
+
+  setTimezone: (timezone) => {
+    const valid = isValidTimezone(timezone) ? timezone : DEFAULT_TIMEZONE;
+    const migrated = valid === 'Europe/Frankfurt' ? 'Europe/Berlin' : valid;
+    set({ selectedTimezone: migrated });
+    safeLocalStorageSet('upstox_timezone', migrated);
+  },
 
   setActiveChartId: (id) => set({ activeChartId: id }),
 
   setLayoutMode: (mode) => {
-    set((state) => {
-      let desiredCount = 4;
-      switch (mode) {
-        case '1':
-          desiredCount = 1;
-          break;
-        case '2h':
-        case '2v':
-          desiredCount = 2;
-          break;
-        case '4':
-          desiredCount = 4;
-          break;
-        case '6':
-          desiredCount = 6;
-          break;
-        case '8':
-          desiredCount = 8;
-          break;
-      }
-
-      let newCharts = [...state.charts];
-      if (newCharts.length < desiredCount) {
-        // Add more charts using watchlist or default items
-        while (newCharts.length < desiredCount) {
-          const nextIndex = newCharts.length;
-          const inst =
-            state.watchlist[nextIndex % state.watchlist.length] ||
-            DEFAULT_INSTRUMENTS[nextIndex % DEFAULT_INSTRUMENTS.length];
-          newCharts.push({
-            id: `chart-${Date.now()}-${nextIndex}`,
-            instrument: inst,
-            timeframe: '5m',
-            dateRangePreset: '5D',
-            indicators: { ...DEFAULT_INDICATORS },
-          });
-        }
-      } else if (newCharts.length > desiredCount) {
-        newCharts = newCharts.slice(0, desiredCount);
-      }
-
-      const activeId = newCharts.some((c) => c.id === state.activeChartId)
-        ? state.activeChartId
-        : newCharts[0]?.id || '';
-
-      const updated = { layoutMode: mode, charts: newCharts, activeChartId: activeId };
-      persistActiveState(updated.charts, mode);
-      return updated;
-    });
+    if (!ALLOWED_LAYOUT_MODES.has(mode)) return;
+    const currentCharts = get().charts;
+    set({ layoutMode: mode });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: currentCharts, layoutMode: mode })
+    );
   },
 
   openChartForInstrument: (instrument) => {
     const { charts, activeChartId, layoutMode } = get();
 
-    // 1. Check if an existing chart in the current visible grid already displays this stock
-    const existingChart = charts.find(
-      (c) =>
-        c.instrument.instrument_key.toLowerCase() ===
-          instrument.instrument_key.toLowerCase() ||
-        c.instrument.trading_symbol.toUpperCase() ===
-          instrument.trading_symbol.toUpperCase()
+    // Match instruments by instrument_key
+    const existingIdx = charts.findIndex(
+      (c) => c.instrument.instrument_key === instrument.instrument_key
     );
 
-    if (existingChart) {
-      // Focus and highlight that existing chart panel
-      const isAnyExpanded = charts.some((c) => c.isExpanded);
-      const updatedCharts = isAnyExpanded
-        ? charts.map((c) => ({ ...c, isExpanded: c.id === existingChart.id }))
-        : charts;
-
-      set({
-        charts: updatedCharts,
-        activeChartId: existingChart.id,
-      });
-      persistActiveState(updatedCharts, layoutMode);
+    if (existingIdx !== -1) {
+      const targetChart = charts[existingIdx];
+      set({ activeChartId: targetChart.id });
       return;
     }
 
-    // 2. Determine target chart to update: prefer activeChartId, otherwise first chart
-    let targetId = activeChartId;
-    if (!charts.some((c) => c.id === targetId)) {
-      targetId = charts[0]?.id || '';
-    }
-
-    // If no chart exists at all, create one
-    if (!targetId && charts.length === 0) {
-      const newChart: ChartPanelState = {
-        id: `chart-${Date.now()}`,
-        instrument,
-        timeframe: '5m',
-        dateRangePreset: '5D',
-        indicators: { ...DEFAULT_INDICATORS },
-        isExpanded: false,
-      };
-      set({
-        charts: [newChart],
-        activeChartId: newChart.id,
-      });
-      persistActiveState([newChart], layoutMode);
-      return;
-    }
-
-    // 3. Update the target chart panel with the selected instrument and focus it
-    const isAnyExpanded = charts.some((c) => c.isExpanded);
+    const targetId = activeChartId || charts[0]?.id;
     const updatedCharts = charts.map((c) =>
       c.id === targetId
         ? {
             ...c,
             instrument,
-            isExpanded: isAnyExpanded ? true : c.isExpanded,
-            indicators: {
-              ...c.indicators,
-              strategy: true,
-              ema8: true,
-              ema16: true,
-            },
+            indicators: { ...c.indicators }, // Preserve user indicators without forcing
           }
-        : isAnyExpanded
-        ? { ...c, isExpanded: false }
         : c
     );
 
-    set({
-      charts: updatedCharts,
-      activeChartId: targetId,
-    });
-    persistActiveState(updatedCharts, layoutMode);
+    set({ charts: updatedCharts, activeChartId: targetId });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   updateChartInstrument: (chartId, instrument) => {
-    set((state) => {
-      const charts = state.charts.map((c) =>
-        c.id === chartId
-          ? {
-              ...c,
-              instrument,
-              indicators: {
-                ...c.indicators,
-                strategy: true,
-                ema8: true,
-                ema16: true,
-              },
-            }
-          : c
-      );
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
-    });
+    const { charts, layoutMode } = get();
+    const updatedCharts = charts.map((c) =>
+      c.id === chartId
+        ? {
+            ...c,
+            instrument,
+            indicators: { ...c.indicators }, // Preserve user indicators without forcing
+          }
+        : c
+    );
+    set({ charts: updatedCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   updateChartTimeframe: (chartId, timeframe) => {
-    set((state) => {
-      let charts: ChartPanelState[];
-      if (state.syncSettings.timeframe) {
-        // Sync timeframe across all charts
-        charts = state.charts.map((c) => ({ ...c, timeframe }));
-      } else {
-        charts = state.charts.map((c) =>
-          c.id === chartId ? { ...c, timeframe } : c
-        );
-      }
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
-    });
+    if (!ALLOWED_TIMEFRAMES.has(timeframe)) return;
+    const { charts, syncSettings, layoutMode } = get();
+    let updatedCharts: ChartPanelState[];
+    if (syncSettings.timeframe) {
+      updatedCharts = charts.map((c) => ({ ...c, timeframe }));
+    } else {
+      updatedCharts = charts.map((c) => (c.id === chartId ? { ...c, timeframe } : c));
+    }
+    set({ charts: updatedCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   updateChartDateRange: (chartId, preset, customFrom, customTo) => {
-    set((state) => {
-      const charts = state.charts.map((c) =>
-        c.id === chartId
-          ? {
-              ...c,
-              dateRangePreset: preset,
-              customFrom,
-              customTo,
-            }
-          : c
-      );
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
-    });
+    if (!ALLOWED_DATE_PRESETS.has(preset)) return;
+    const { charts, layoutMode } = get();
+    const updatedCharts = charts.map((c) =>
+      c.id === chartId
+        ? {
+            ...c,
+            dateRangePreset: preset,
+            customFrom,
+            customTo,
+          }
+        : c
+    );
+    set({ charts: updatedCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   toggleChartIndicator: (chartId, indicator) => {
-    set((state) => {
-      const charts = state.charts.map((c) => {
-        if (c.id === chartId) {
-          return {
-            ...c,
-            indicators: {
-              ...c.indicators,
-              [indicator]: !c.indicators[indicator],
-            },
-          };
-        }
-        return c;
-      });
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
+    const { charts, layoutMode } = get();
+    const updatedCharts = charts.map((c) => {
+      if (c.id === chartId) {
+        return {
+          ...c,
+          indicators: {
+            ...c.indicators,
+            [indicator]: !c.indicators[indicator],
+          },
+        };
+      }
+      return c;
     });
+    set({ charts: updatedCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   setChartExpanded: (chartId, isExpanded) => {
@@ -473,76 +455,85 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   removeChart: (chartId) => {
-    set((state) => {
-      if (state.charts.length <= 1) return state; // Keep at least 1 chart
-      const charts = state.charts.filter((c) => c.id !== chartId);
-      const activeChartId =
-        state.activeChartId === chartId ? charts[0]?.id : state.activeChartId;
-      persistActiveState(charts, state.layoutMode);
-      return { charts, activeChartId };
-    });
+    const { charts, activeChartId, layoutMode } = get();
+    if (charts.length <= 1) return;
+    const nextCharts = charts.filter((c) => c.id !== chartId);
+    const nextActiveId = activeChartId === chartId ? nextCharts[0]?.id : activeChartId;
+    set({ charts: nextCharts, activeChartId: nextActiveId });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: nextCharts, layoutMode })
+    );
   },
 
   addChart: (instrument) => {
-    set((state) => {
-      if (state.charts.length >= 8) return state;
-      const targetInst =
-        instrument ||
-        state.watchlist[state.charts.length % state.watchlist.length] ||
-        DEFAULT_INSTRUMENTS[0];
-      const newChart: ChartPanelState = {
-        id: `chart-${Date.now()}`,
-        instrument: targetInst,
-        timeframe: '5m',
-        dateRangePreset: '5D',
-        indicators: { ...DEFAULT_INDICATORS },
-      };
-      const charts = [...state.charts, newChart];
-      persistActiveState(charts, state.layoutMode);
-      return { charts, activeChartId: newChart.id };
+    const { charts, layoutMode, watchlist } = get();
+    if (charts.length >= 8) return;
+
+    const targetInst =
+      instrument ||
+      watchlist[charts.length % watchlist.length] ||
+      DEFAULT_INSTRUMENTS[0];
+
+    const newChart: ChartPanelState = {
+      id: `chart-${Date.now()}`,
+      instrument: targetInst,
+      timeframe: '5m',
+      dateRangePreset: '5D',
+      indicators: { ...DEFAULT_INDICATORS },
+    };
+
+    const nextCharts = [...charts, newChart];
+    const newCount = nextCharts.length;
+
+    // Keep addChart consistent with grid mode capacity
+    let nextLayoutMode = layoutMode;
+    if (layoutMode === '1' && newCount >= 2) nextLayoutMode = '2h';
+    else if ((layoutMode === '2h' || layoutMode === '2v') && newCount >= 3) nextLayoutMode = '4';
+    else if (layoutMode === '4' && newCount >= 5) nextLayoutMode = '6';
+    else if (layoutMode === '6' && newCount >= 7) nextLayoutMode = '8';
+
+    set({
+      charts: nextCharts,
+      layoutMode: nextLayoutMode,
+      activeChartId: newChart.id,
     });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: nextCharts, layoutMode: nextLayoutMode })
+    );
   },
 
   setGlobalTimeframe: (timeframe) => {
-    set((state) => {
-      const charts = state.charts.map((c) => ({ ...c, timeframe }));
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
-    });
+    if (!ALLOWED_TIMEFRAMES.has(timeframe)) return;
+    const { charts, layoutMode } = get();
+    const nextCharts = charts.map((c) => ({ ...c, timeframe }));
+    set({ charts: nextCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: nextCharts, layoutMode })
+    );
   },
 
   triggerGlobalRefresh: () => set({ globalRefreshTrigger: Date.now() }),
 
   addToWatchlist: (instrument) => {
-    set((state) => {
-      if (state.watchlist.some((w) => w.instrument_key === instrument.instrument_key)) {
-        return state;
-      }
-      const watchlist = [...state.watchlist, instrument];
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_watchlist', JSON.stringify(watchlist));
-      }
-      return { watchlist };
-    });
+    const current = get().watchlist;
+    if (current.some((w) => w.instrument_key === instrument.instrument_key)) return;
+    const next = [...current, instrument];
+    set({ watchlist: next });
+    safeLocalStorageSet('upstox_watchlist', JSON.stringify(next));
   },
 
   removeFromWatchlist: (instrumentKey) => {
-    set((state) => {
-      const watchlist = state.watchlist.filter((w) => w.instrument_key !== instrumentKey);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_watchlist', JSON.stringify(watchlist));
-      }
-      return { watchlist };
-    });
+    const next = get().watchlist.filter((w) => w.instrument_key !== instrumentKey);
+    set({ watchlist: next });
+    safeLocalStorageSet('upstox_watchlist', JSON.stringify(next));
   },
 
   reorderWatchlist: (newList) => {
-    set(() => {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_watchlist', JSON.stringify(newList));
-      }
-      return { watchlist: newList };
-    });
+    set({ watchlist: newList });
+    safeLocalStorageSet('upstox_watchlist', JSON.stringify(newList));
   },
 
   saveCurrentLayout: (name) => {
@@ -559,6 +550,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         segment: c.instrument.segment,
         timeframe: c.timeframe,
         dateRangePreset: c.dateRangePreset,
+        customFrom: c.customFrom,
+        customTo: c.customTo,
         indicators: c.indicators,
       })),
       syncSettings,
@@ -567,10 +560,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     };
 
     const updatedLayouts = [...savedLayouts, newLayout];
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('upstox_saved_layouts', JSON.stringify(updatedLayouts));
-    }
     set({ savedLayouts: updatedLayouts });
+    safeLocalStorageSet('upstox_saved_layouts', JSON.stringify(updatedLayouts));
   },
 
   loadSavedLayout: (layoutId) => {
@@ -578,56 +569,52 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const target = savedLayouts.find((l) => l.id === layoutId);
     if (!target) return;
 
-    const charts: ChartPanelState[] = target.charts.map((c, i) => ({
+    const restoredCharts: ChartPanelState[] = target.charts.map((c, i) => ({
       id: `chart-${Date.now()}-${i}`,
       instrument: {
         instrument_key: c.instrumentKey,
         trading_symbol: c.tradingSymbol,
         name: c.name,
-        exchange: c.exchange,
-        segment: c.segment,
+        exchange: c.exchange as Exchange,
+        segment: c.segment as InstrumentSegment,
       },
+
       timeframe: c.timeframe,
       dateRangePreset: c.dateRangePreset,
+      customFrom: c.customFrom,
+      customTo: c.customTo,
       indicators: c.indicators,
     }));
 
     set({
       layoutMode: target.layoutMode,
-      charts,
+      charts: restoredCharts,
       syncSettings: target.syncSettings,
-      activeChartId: charts[0]?.id || '',
+      activeChartId: restoredCharts[0]?.id || '',
     });
-    persistActiveState(charts, target.layoutMode);
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: restoredCharts, layoutMode: target.layoutMode })
+    );
+    safeLocalStorageSet('upstox_sync_settings', JSON.stringify(target.syncSettings));
   },
 
   deleteSavedLayout: (layoutId) => {
-    set((state) => {
-      const savedLayouts = state.savedLayouts.filter((l) => l.id !== layoutId);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_saved_layouts', JSON.stringify(savedLayouts));
-      }
-      return { savedLayouts };
-    });
+    const savedLayouts = get().savedLayouts.filter((l) => l.id !== layoutId);
+    set({ savedLayouts });
+    safeLocalStorageSet('upstox_saved_layouts', JSON.stringify(savedLayouts));
   },
 
   updateSyncSettings: (settings) => {
-    set((state) => {
-      const syncSettings = { ...state.syncSettings, ...settings };
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_sync_settings', JSON.stringify(syncSettings));
-      }
-      return { syncSettings };
-    });
+    const next = { ...get().syncSettings, ...settings };
+    set({ syncSettings: next });
+    safeLocalStorageSet('upstox_sync_settings', JSON.stringify(next));
   },
 
   setAutoRefreshInterval: (interval) => {
-    set(() => {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('upstox_auto_refresh', String(interval));
-      }
-      return { autoRefreshInterval: interval };
-    });
+    if (!ALLOWED_REFRESH_INTERVALS.has(interval)) return;
+    set({ autoRefreshInterval: interval });
+    safeLocalStorageSet('upstox_auto_refresh', String(interval));
   },
 
   setConnectionStatus: (status, details) => {
@@ -640,107 +627,150 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     }));
   },
 
-  openSymbolSearch: (targetChartId) => {
-    set((state) => ({
-      isSymbolSearchOpen: true,
-      targetChartForSearch: targetChartId || state.activeChartId,
-    }));
-  },
-
-  closeSymbolSearch: () => {
-    set({ isSymbolSearchOpen: false, targetChartForSearch: null });
-  },
-
-  setLayoutModalOpen: (open) => set({ isLayoutModalOpen: open }),
-  setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
-
   loadPersistedState: () => {
     if (typeof window === 'undefined') return;
 
+    // 1. Schema version
+    try {
+      const storedVersion = localStorage.getItem('upstox_schema_version');
+      if (!storedVersion) {
+        safeLocalStorageSet('upstox_schema_version', SCHEMA_VERSION);
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. Watchlist
     try {
       const savedWatchlist = localStorage.getItem('upstox_watchlist');
       if (savedWatchlist) {
-        set({ watchlist: JSON.parse(savedWatchlist) });
+        const parsed = JSON.parse(savedWatchlist);
+        if (Array.isArray(parsed)) {
+          const validated = parsed.filter(isValidInstrument);
+          if (validated.length > 0) {
+            set({ watchlist: validated });
+          }
+        }
       }
+    } catch (e) {
+      console.warn('Watchlist hydration error:', e);
+    }
 
+    // 3. Saved Layouts
+    try {
       const savedLayouts = localStorage.getItem('upstox_saved_layouts');
       if (savedLayouts) {
-        set({ savedLayouts: JSON.parse(savedLayouts) });
+        const parsed = JSON.parse(savedLayouts);
+        if (Array.isArray(parsed)) {
+          set({ savedLayouts: parsed });
+        }
       }
+    } catch (e) {
+      console.warn('Saved layouts hydration error:', e);
+    }
 
+    // 4. Sync Settings
+    try {
       const sync = localStorage.getItem('upstox_sync_settings');
       if (sync) {
-        set({ syncSettings: JSON.parse(sync) });
-      }
-
-      const refresh = localStorage.getItem('upstox_auto_refresh');
-      if (refresh) {
-        set({ autoRefreshInterval: parseInt(refresh, 10) as AutoRefreshInterval });
-      }
-
-      const savedTz = localStorage.getItem('upstox_timezone');
-      if (savedTz) {
-        set({ selectedTimezone: isValidTimezone(savedTz) ? savedTz : DEFAULT_TIMEZONE });
-      }
-
-      const active = localStorage.getItem('upstox_active_dashboard');
-      if (active) {
-        const parsed = JSON.parse(active);
-        if (parsed.charts && parsed.charts.length > 0) {
-          // Enforce strategy is enabled across all charts
-          const chartsWithStrategy = parsed.charts.map((c: ChartPanelState) => ({
-            ...c,
-            indicators: {
-              ...DEFAULT_INDICATORS,
-              ...(c.indicators || {}),
-              strategy: true,
-              ema8: true,
-              ema16: true,
-              rsi14: true,
-            },
-          }));
+        const parsed = JSON.parse(sync);
+        if (parsed && typeof parsed === 'object') {
           set({
-            charts: chartsWithStrategy,
-            layoutMode: parsed.layoutMode || '4',
-            activeChartId: chartsWithStrategy[0].id,
+            syncSettings: {
+              crosshair: Boolean(parsed.crosshair),
+              timeRange: Boolean(parsed.timeRange),
+              timeframe: Boolean(parsed.timeframe),
+              symbol: Boolean(parsed.symbol),
+            },
           });
         }
       }
     } catch (e) {
-      console.warn('Failed loading persisted state from localStorage:', e);
+      console.warn('Sync settings hydration error:', e);
     }
+
+    // 5. Auto Refresh Interval
+    try {
+      const refresh = localStorage.getItem('upstox_auto_refresh');
+      if (refresh) {
+        const parsed = parseInt(refresh, 10) as AutoRefreshInterval;
+        if (ALLOWED_REFRESH_INTERVALS.has(parsed)) {
+          set({ autoRefreshInterval: parsed });
+        }
+      }
+    } catch (e) {
+      console.warn('Auto refresh hydration error:', e);
+    }
+
+    // 6. Timezone (Migrating Europe/Frankfurt to Europe/Berlin)
+    try {
+      const savedTz = localStorage.getItem('upstox_timezone');
+      if (savedTz) {
+        const migrated = savedTz === 'Europe/Frankfurt' ? 'Europe/Berlin' : savedTz;
+        if (isValidTimezone(migrated)) {
+          set({ selectedTimezone: migrated });
+          if (savedTz === 'Europe/Frankfurt') {
+            safeLocalStorageSet('upstox_timezone', 'Europe/Berlin');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Timezone hydration error:', e);
+    }
+
+    // 7. Active Dashboard Charts
+    try {
+      const active = localStorage.getItem('upstox_active_dashboard');
+      if (active) {
+        const parsed = JSON.parse(active);
+        if (parsed && Array.isArray(parsed.charts) && parsed.charts.length > 0) {
+          const validatedCharts = parsed.charts.filter(isValidChartState);
+          if (validatedCharts.length > 0) {
+            // Restore actual indicators without forcing artificial values
+            const restoredCharts = validatedCharts.map((c: ChartPanelState) => ({
+              ...c,
+              indicators: {
+                ...DEFAULT_INDICATORS,
+                ...(c.indicators || {}),
+              },
+            }));
+
+            const validMode: LayoutGridMode = ALLOWED_LAYOUT_MODES.has(parsed.layoutMode)
+              ? parsed.layoutMode
+              : '4';
+            set({
+              charts: restoredCharts,
+              layoutMode: validMode,
+              activeChartId: restoredCharts[0].id,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Active dashboard hydration error:', e);
+    }
+
+    // Mark hydration complete to gate dependent fetches
+    set({ isHydrated: true });
   },
 
   applyStrategyToAllCharts: (enable?: boolean) => {
-    set((state) => {
-      const targetState =
-        enable !== undefined ? enable : !state.charts.some((c) => c.indicators.strategy);
+    const { charts, layoutMode } = get();
+    const targetState =
+      enable !== undefined ? enable : !charts.some((c) => c.indicators.strategy);
 
-      const charts = state.charts.map((c) => ({
-        ...c,
-        indicators: {
-          ...c.indicators,
-          strategy: targetState,
-          ema8: targetState ? true : c.indicators.ema8,
-          ema16: targetState ? true : c.indicators.ema16,
-          rsi14: targetState ? true : c.indicators.rsi14,
-          volume: targetState ? true : c.indicators.volume,
-        },
-      }));
-      persistActiveState(charts, state.layoutMode);
-      return { charts };
-    });
+    const nextCharts = charts.map((c) => ({
+      ...c,
+      indicators: {
+        ...c.indicators,
+        strategy: targetState,
+      },
+    }));
+
+    set({ charts: nextCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: nextCharts, layoutMode })
+    );
   },
 }));
-
-function persistActiveState(charts: ChartPanelState[], layoutMode: LayoutGridMode) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(
-      'upstox_active_dashboard',
-      JSON.stringify({ charts, layoutMode })
-    );
-  } catch {
-    // Ignore storage quota
-  }
-}

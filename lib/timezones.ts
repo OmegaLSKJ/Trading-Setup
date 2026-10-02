@@ -43,10 +43,10 @@ export const TIMEZONE_OPTIONS: TimezoneOption[] = [
     offset: 'UTC+0 / UTC+1',
   },
   {
-    value: 'Europe/Frankfurt',
+    value: 'Europe/Berlin',
     label: 'Central European (CET)',
     shortLabel: 'CET',
-    region: 'Frankfurt / Euronext',
+    region: 'Berlin / Frankfurt / Euronext',
     offset: 'UTC+1 / UTC+2',
   },
   {
@@ -96,17 +96,22 @@ export const TIMEZONE_OPTIONS: TimezoneOption[] = [
 export const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
 export function getTimezoneOption(tz: string): TimezoneOption {
-  const found = TIMEZONE_OPTIONS.find((t) => t.value.toLowerCase() === tz.toLowerCase());
+  const normalized = tz === 'Europe/Frankfurt' ? 'Europe/Berlin' : tz;
+  if (!isValidTimezone(normalized)) {
+    return TIMEZONE_OPTIONS.find((t) => t.value === DEFAULT_TIMEZONE)!;
+  }
+  const found = TIMEZONE_OPTIONS.find((t) => t.value.toLowerCase() === normalized.toLowerCase());
   if (found) return found;
 
   return {
-    value: tz,
-    label: tz,
-    shortLabel: tz.split('/').pop()?.replace('_', ' ') || 'TZ',
+    value: normalized,
+    label: normalized,
+    shortLabel: normalized.split('/').pop()?.replace('_', ' ') || 'TZ',
     region: 'Custom',
     offset: '',
   };
 }
+
 
 export function isValidTimezone(tz: string): boolean {
   if (!tz || typeof tz !== 'string') return false;

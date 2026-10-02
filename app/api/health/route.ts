@@ -1,53 +1,106 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { isTokenConfigured, getUpstoxToken } from '@/lib/upstox-service';
 import { instrumentService } from '@/lib/instruments';
-import { allowApiRequest } from '@/lib/api-rate-limit';
+import { ConnectionStatus } from '@/lib/types';
 
-export async function GET(request: NextRequest) {
-  if (!allowApiRequest(request, 'health', 60)) {
-    return NextResponse.json({ status: 'RATE_LIMITED', error: 'Too many health checks; try again shortly' }, { status: 429 });
+export const dynamic = 'force-dynamic';
+
+interface HealthCache {
+  timestamp: number;
+  data: {
+    status: ConnectionStatus;
+    tokenConfigured: boolean;
+    upstoxConnected: boolean;
+    latencyMs: number;
+    statusMessage: string;
+    instrumentsIndexed: number;
+    timestamp: string;
+    error?: string;
+  };
+}
+
+let cachedHealth: HealthCache | null = null;
+const HEALTH_CACHE_TTL_MS = 5000;
+
+export async function GET() {
+  const now = Date.now();
+  if (cachedHealth && now - cachedHealth.timestamp < HEALTH_CACHE_TTL_MS) {
+    return NextResponse.json(cachedHealth.data);
   }
+
   const tokenConfigured = isTokenConfigured();
   let upstoxConnected = false;
   let latencyMs = 0;
   let statusMessage = 'Checking...';
-  let responseStatus = 0;
+  let status: ConnectionStatus = 'OFFLINE';
+  let probeError: string | undefined = undefined;
+
+  if (!tokenConfigured) {
+    status = 'NO_TOKEN';
+    statusMessage = 'Upstox token not configured in .env.local';
+  }
 
   try {
     const startTime = Date.now();
-    // Test endpoint using standard Upstox historical candle ping for Reliance
     const testUrl = 'https://api.upstox.com/v3/historical-candle/NSE_EQ%7CINE002A01018/days/1/2024-03-01/2024-02-28';
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = getUpstoxToken();
+
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(testUrl, { headers, cache: 'no-store' });
-    responseStatus = res.status;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(testUrl, {
+      headers,
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
     latencyMs = Date.now() - startTime;
 
     if (res.status === 200) {
       upstoxConnected = true;
-      statusMessage = tokenConfigured ? 'Connected & Authenticated' : 'Connected (Public Market Feed)';
+      status = 'CONNECTED';
+      statusMessage = 'Upstox API Connected & Healthy';
     } else if (res.status === 401 || res.status === 403) {
-      statusMessage = 'Token Expired or Invalid';
+      status = 'NO_TOKEN';
+      statusMessage = 'Upstox Token Invalid or Expired';
+      probeError = `HTTP ${res.status}: Unauthorized`;
     } else if (res.status === 429) {
-      statusMessage = 'Rate Limited';
+      status = 'RATE_LIMITED';
+      statusMessage = 'Upstox Rate Limit Exceeded';
+      probeError = 'HTTP 429: Too Many Requests';
     } else {
-      statusMessage = `HTTP ${res.status}`;
+      status = 'UPSTREAM_UNREACHABLE';
+      statusMessage = `Upstream error: HTTP ${res.status}`;
+      probeError = `HTTP ${res.status}`;
     }
   } catch (err: unknown) {
-    statusMessage = `Network Error: ${err instanceof Error ? err.message : 'Failed to connect'}`;
+    status = 'UPSTREAM_UNREACHABLE';
+    const msg = err instanceof Error ? err.message : 'Network failure';
+    statusMessage = `Network Error: ${msg}`;
+    probeError = msg;
   }
 
-  return NextResponse.json({
-    status: upstoxConnected ? 'CONNECTED' : tokenConfigured && [401, 403].includes(responseStatus) ? 'TOKEN_ERROR' : 'OFFLINE',
+  const payload = {
+    status,
     tokenConfigured,
     upstoxConnected,
     latencyMs,
     statusMessage,
     instrumentsIndexed: instrumentService.getCount(),
     timestamp: new Date().toISOString(),
-  });
+    error: probeError,
+  };
+
+  cachedHealth = {
+    timestamp: now,
+    data: payload,
+  };
+
+  return NextResponse.json(payload);
 }

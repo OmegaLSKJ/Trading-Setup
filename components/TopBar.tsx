@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { LayoutGridMode, Timeframe } from '@/lib/types';
 import { getIndianMarketStatus } from '@/lib/market-hours';
@@ -31,23 +31,22 @@ const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string }[] = 
 const GLOBAL_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '1h', '1D'];
 
 export const TopBar: React.FC = () => {
-  const {
-    charts,
-    layoutMode,
-    setLayoutMode,
-    setGlobalTimeframe,
-    triggerGlobalRefresh,
-    openSymbolSearch,
-    setLayoutModalOpen,
-    setSettingsModalOpen,
-    addChart,
-    applyStrategyToAllCharts,
-    connectionStatus,
-    connectionDetails,
-    setConnectionStatus,
-    selectedTimezone,
-    setTimezone,
-  } = useDashboardStore();
+  // Selector-based subscriptions to prevent unnecessary re-renders
+  const charts = useDashboardStore((s) => s.charts);
+  const layoutMode = useDashboardStore((s) => s.layoutMode);
+  const setLayoutMode = useDashboardStore((s) => s.setLayoutMode);
+  const setGlobalTimeframe = useDashboardStore((s) => s.setGlobalTimeframe);
+  const triggerGlobalRefresh = useDashboardStore((s) => s.triggerGlobalRefresh);
+  const openSymbolSearch = useDashboardStore((s) => s.openSymbolSearch);
+  const setLayoutModalOpen = useDashboardStore((s) => s.setLayoutModalOpen);
+  const setSettingsModalOpen = useDashboardStore((s) => s.setSettingsModalOpen);
+  const addChart = useDashboardStore((s) => s.addChart);
+  const applyStrategyToAllCharts = useDashboardStore((s) => s.applyStrategyToAllCharts);
+  const connectionStatus = useDashboardStore((s) => s.connectionStatus);
+  const connectionDetails = useDashboardStore((s) => s.connectionDetails);
+  const setConnectionStatus = useDashboardStore((s) => s.setConnectionStatus);
+  const selectedTimezone = useDashboardStore((s) => s.selectedTimezone);
+  const setTimezone = useDashboardStore((s) => s.setTimezone);
 
   const isStrategyActive = charts.some((c) => c.indicators.strategy);
 
@@ -55,13 +54,20 @@ export const TopBar: React.FC = () => {
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
   const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false);
 
+  const isCheckingHealthRef = useRef(false);
+
   const currentTimezoneOpt = getTimezoneOption(selectedTimezone || 'Asia/Kolkata');
 
-  // Poll health endpoint periodically
+  // Poll health endpoint periodically with an in-flight guard
   useEffect(() => {
+    let isMounted = true;
+
     const checkHealth = async () => {
+      if (isCheckingHealthRef.current) return;
+      isCheckingHealthRef.current = true;
       try {
         const res = await fetch('/api/health');
+        if (!isMounted) return;
         if (res.ok) {
           const data = await res.json();
           setConnectionStatus(data.status, {
@@ -70,20 +76,30 @@ export const TopBar: React.FC = () => {
             instrumentsIndexed: data.instrumentsIndexed,
           });
         } else {
-          setConnectionStatus('TOKEN_ERROR', { statusMessage: `HTTP ${res.status}` });
+          const errData = await res.json().catch(() => null);
+          const status = errData?.status || (res.status === 401 ? 'TOKEN_ERROR' : 'UPSTREAM_UNREACHABLE');
+          setConnectionStatus(status, {
+            statusMessage: errData?.statusMessage || `HTTP ${res.status}`,
+          });
         }
       } catch {
-        setConnectionStatus('OFFLINE', { statusMessage: 'Network disconnected' });
+        if (!isMounted) return;
+        setConnectionStatus('UPSTREAM_UNREACHABLE', { statusMessage: 'Network disconnected' });
+      } finally {
+        isCheckingHealthRef.current = false;
       }
     };
 
     checkHealth();
     const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [setConnectionStatus]);
 
   return (
-    <header className="h-12 w-full bg-[#0b0f19] border-b border-slate-800 flex items-center justify-between px-3 shrink-0 select-none z-30">
+    <header className="min-h-12 w-full bg-[#0b0f19] border-b border-slate-800 flex flex-wrap items-center justify-between px-3 py-1 shrink-0 select-none z-30 gap-2">
       {/* Brand & Symbol Search */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 pr-2 border-r border-slate-800">
@@ -344,35 +360,46 @@ export const TopBar: React.FC = () => {
         <div className="relative">
           <button
             onClick={() => setIsStatusPopoverOpen(!isStatusPopoverOpen)}
-            className={`flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-semibold tracking-wider transition-colors cursor-pointer bg-opacity-10`}
+            className={`flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-semibold tracking-wider transition-colors cursor-pointer ${
+              connectionStatus === 'CONNECTED'
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
+                : connectionStatus === 'NO_TOKEN'
+                ? 'bg-amber-950/40 border-amber-500/40 text-amber-300'
+                : connectionStatus === 'RATE_LIMITED'
+                ? 'bg-amber-950/40 border-amber-500/40 text-amber-400'
+                : connectionStatus === 'UPSTREAM_UNREACHABLE'
+                ? 'bg-rose-950/40 border-rose-500/40 text-rose-400'
+                : 'bg-slate-900 border-slate-700 text-slate-400'
+            }`}
           >
             <span className="relative flex h-2 w-2">
               <span
                 className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                  connectionStatus === 'CONNECTED' ? 'bg-emerald-400' : 'bg-amber-400'
+                  connectionStatus === 'CONNECTED'
+                    ? 'bg-emerald-400'
+                    : connectionStatus === 'NO_TOKEN' || connectionStatus === 'RATE_LIMITED'
+                    ? 'bg-amber-400'
+                    : 'bg-rose-400'
                 }`}
               ></span>
               <span
                 className={`relative inline-flex rounded-full h-2 w-2 ${
                   connectionStatus === 'CONNECTED'
                     ? 'bg-emerald-500'
-                    : connectionStatus === 'RATE_LIMITED'
+                    : connectionStatus === 'NO_TOKEN' || connectionStatus === 'RATE_LIMITED'
                     ? 'bg-amber-500'
                     : 'bg-rose-500'
                 }`}
               ></span>
             </span>
             <span className="font-mono">UPSTOX</span>
-            <span
-              className={`text-[10px] ${
-                connectionStatus === 'CONNECTED'
-                  ? 'text-emerald-400'
-                  : connectionStatus === 'RATE_LIMITED'
-                  ? 'text-amber-400'
-                  : 'text-rose-400'
-              }`}
-            >
-              ● {connectionStatus}
+            <span className="text-[10px]">
+              ●{' '}
+              {connectionStatus === 'NO_TOKEN'
+                ? 'NO TOKEN'
+                : connectionStatus === 'UPSTREAM_UNREACHABLE'
+                ? 'UNREACHABLE'
+                : connectionStatus}
             </span>
           </button>
 

@@ -108,29 +108,39 @@ export const WatchlistSidebar: React.FC = () => {
             {filtered.map((item) => {
               const activeChart = charts.find((c) => c.id === activeChartId);
               const isCurrentActive =
-                activeChart?.instrument.trading_symbol.toUpperCase() ===
-                  item.trading_symbol.toUpperCase() ||
-                activeChart?.instrument.instrument_key.toLowerCase() ===
-                  item.instrument_key.toLowerCase();
+                activeChart?.instrument.instrument_key === item.instrument_key ||
+                (!activeChart?.instrument.instrument_key &&
+                  activeChart?.instrument.trading_symbol.toUpperCase() ===
+                    item.trading_symbol.toUpperCase());
 
               const isOpenInAnyChart = charts.some(
                 (c) =>
-                  c.instrument.trading_symbol.toUpperCase() ===
-                  item.trading_symbol.toUpperCase()
+                  c.instrument.instrument_key === item.instrument_key ||
+                  (!c.instrument.instrument_key &&
+                    c.instrument.trading_symbol.toUpperCase() ===
+                      item.trading_symbol.toUpperCase())
               );
 
               return (
                 <div
                   key={item.instrument_key}
+                  tabIndex={0}
+                  role="button"
                   onClick={() => handleSelectSymbol(item)}
-                  className={`group flex items-center justify-between px-2.5 py-2 cursor-pointer transition-all border-l-2 ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectSymbol(item);
+                    }
+                  }}
+                  className={`group flex items-center justify-between px-2.5 py-2 cursor-pointer transition-all border-l-2 focus:outline-hidden focus:ring-1 focus:ring-emerald-400 ${
                     isCurrentActive
                       ? 'bg-purple-950/50 border-purple-400 text-purple-200 shadow-inner'
                       : isOpenInAnyChart
                       ? 'bg-slate-900/60 border-emerald-500/60 hover:bg-slate-800/80 text-slate-200'
                       : 'border-transparent hover:bg-slate-800/60 text-slate-300'
                   }`}
-                  title={`Click to open ${item.trading_symbol} chart`}
+                  title={`Click or press Enter to open ${item.trading_symbol} chart`}
                 >
                   <div className="min-w-0 pr-1 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">

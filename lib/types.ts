@@ -1,4 +1,4 @@
-export type Exchange = 'NSE' | 'BSE' | 'NFO' | 'MCX';
+export type Exchange = 'NSE' | 'BSE' | 'NFO' | 'MCX' | 'NASDAQ' | 'NYSE';
 
 export type InstrumentSegment =
   | 'NSE_EQ'
@@ -7,13 +7,13 @@ export type InstrumentSegment =
   | 'BSE_EQ'
   | 'BSE_INDEX'
   | 'MCX_FO'
-  | string;
+  | 'US_EQ';
 
 export interface Instrument {
   instrument_key: string;
   trading_symbol: string;
   name: string;
-  exchange: Exchange | string;
+  exchange: Exchange;
   segment: InstrumentSegment;
   instrument_type?: string;
   lot_size?: number;
@@ -49,6 +49,20 @@ export interface Candle {
   close: number;
   volume: number;
   openInterest?: number;
+}
+
+export interface FailedRange {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+export interface CandleResponse {
+  success: boolean;
+  candles: Candle[];
+  error?: string;
+  partial?: boolean;
+  failedRanges?: FailedRange[];
 }
 
 export interface IndicatorConfig {
@@ -95,6 +109,8 @@ export interface SavedLayout {
     segment: string;
     timeframe: Timeframe;
     dateRangePreset: DateRangePreset;
+    customFrom?: string;
+    customTo?: string;
     indicators: IndicatorConfig;
   }[];
   syncSettings: SyncSettings;
@@ -102,7 +118,7 @@ export interface SavedLayout {
   updatedAt: number;
 }
 
-export type AutoRefreshInterval = 0 | 10000 | 30000 | 60000; // 0 = OFF
+export type AutoRefreshInterval = 0 | 5000 | 10000 | 30000 | 60000; // 0 = OFF
 
 export interface MarketQuote {
   instrument_key: string;
@@ -121,5 +137,23 @@ export type ConnectionStatus =
   | 'CONNECTED'
   | 'FETCHING'
   | 'RATE_LIMITED'
-  | 'TOKEN_ERROR'
+  | 'NO_TOKEN'
+  | 'UPSTREAM_UNREACHABLE'
   | 'OFFLINE';
+
+export type QuoteState = 'FRESH' | 'STALE' | 'MARKET_CLOSED';
+
+export interface LiveTick {
+  type?: 'TICK';
+  instrumentKey: string;
+  price: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  close: number;
+  cumulativeVolume?: number;
+  volumeDelta: number;
+  timestamp: number; // Unix seconds
+  direction: 'UP' | 'DOWN' | 'EQUAL';
+  state?: QuoteState;
+}
