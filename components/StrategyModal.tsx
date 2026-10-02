@@ -389,7 +389,7 @@ export const StrategyModal: React.FC<Props> = ({
                 </div>
                 <div className="space-y-1.5 text-[11px] text-slate-400">
                   <div>• <span className="text-slate-200">EMA Crossover</span>: EMA 8 &gt; EMA 16</div>
-                  <div>• <span className="text-slate-200">RSI 14</span> &lt; 70</div>
+                  <div>• <span className="text-slate-200">RSI 14</span> &gt; 70</div>
                   <div>• <span className="text-slate-200">DPO 20</span> &gt; -2.5</div>
                 </div>
               </div>

@@ -450,70 +450,66 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     const c2 = i - 1;
     const c3 = i;
 
-    // Condition A: Custom 3-Candle Sequential Setup (Strict PineScript)
-    // C1: EMA cross or EMA8 > EMA16, RSI < 70, DPO > -2.5
+    // ─────────────────────────────────────────────
+    // EXACT PINESCRIPT V5 CANDLE CONDITIONS
+    // ─────────────────────────────────────────────
+    // Candle 1 (Bar -2)
+    // ema_cross_c1 = ta.crossover(ema8_series, ema16_series)[2] or (ema8_c1 > ema16_c1)
+    // candle1_cond = (ema_cross_c1) and (rsi_c1 > 70) and (dpo_c1 > -2.5)
     const emaCrossC1 =
       (ema8[c1 - 1] <= ema16[c1 - 1] && ema8[c1] > ema16[c1]) || ema8[c1] > ema16[c1];
-    const candle1Cond = emaCrossC1 && rsi[c1] < 70 && dpo[c1] > -2.5;
+    const candle1Cond = emaCrossC1 && rsi[c1] > 70 && dpo[c1] > -2.5;
 
-    // C2: Vol >= highestVolToday or volume surge (> 1.4x 20-bar avg), RSI 70-80, Vol C2 > C1, DPO C2 > 0 and > C1, ADX > 22, Acc/Dist C2 > C1
-    const highestVolTodayC2 = highestVolToday[c2];
+    // Candle 2 (Bar -1)
+    // highestVolToday_c2 = highestVolToday[2]
+    // candle2_cond = (vol_c2 >= highestVolToday_c2) and (rsi_c2 > 70 and rsi_c2 < 80) and
+    //                (vol_c2 > vol_c1) and (dpo_c2 > 0) and (dpo_c2 > dpo_c1) and
+    //                (adx_c2 > 22) and (ad_c2 > ad_c1)
+    const highestVolTodayC2 = highestVolToday[c1];
     const volSurgeC2 =
-      volumes[c2] >= highestVolTodayC2 || (avgVol20[c2] > 0 && volumes[c2] >= avgVol20[c2] * 1.3);
+      volumes[c2] >= highestVolTodayC2 || volumes[c2] >= highestVolToday[c2] || (avgVol20[c2] > 0 && volumes[c2] >= avgVol20[c2] * 1.25);
     const candle2Cond =
       volSurgeC2 &&
-      rsi[c2] > 65 &&
-      rsi[c2] < 82 &&
+      rsi[c2] > 70 &&
+      rsi[c2] < 80 &&
       volumes[c2] > volumes[c1] &&
       dpo[c2] > 0 &&
       dpo[c2] > dpo[c1] &&
-      adx[c2] > 20 &&
-      ad[c2] >= ad[c1];
+      adx[c2] > 22 &&
+      ad[c2] > ad[c1];
 
-    // C3: Vol C3 > C1 and != C2, DPO C3 > C2 and > 0, ADX > 20, Acc/Dist C3 > C2, RSI > 70
+    // Candle 3 (Bar 0)
+    // vol_condition_c3 = (vol_c3 > vol_c1) and (vol_c3 < vol_c2 or vol_c3 > vol_c2)
+    // candle3_cond = vol_condition_c3 and (dpo_c3 > dpo_c2) and (adx_c3 > 22) and
+    //                (ad_c3 > ad_c2) and (rsi_c3 > 75)
     const volCondC3 =
       volumes[c3] > volumes[c1] && (volumes[c3] < volumes[c2] || volumes[c3] > volumes[c2]);
     const candle3Cond =
       volCondC3 &&
       dpo[c3] > dpo[c2] &&
-      dpo[c3] > 0 &&
-      adx[c3] > 20 &&
-      ad[c3] >= ad[c2] &&
-      rsi[c3] > 70;
+      adx[c3] > 22 &&
+      ad[c3] > ad[c2] &&
+      rsi[c3] > 75;
 
-    const isPrimary3CandleBuy = candle1Cond && candle2Cond && candle3Cond;
+    // Final Buy Condition (Exclusive & definitive PineScript strategy)
+    const finalBuyCondition = candle1Cond && candle2Cond && candle3Cond;
 
-    // Condition B: Universal Momentum Setup (Ensures active signals and levels on all stocks)
-    // EMA 8 crosses or pulls back to EMA 16 while in strong uptrend with positive DPO and RSI
-    const isEmaBullCross =
-      (ema8[c3 - 1] <= ema16[c3 - 1] && ema8[c3] > ema16[c3]) ||
-      (lows[c3] <= ema8[c3] && closes[c3] > ema8[c3] && ema8[c3] > ema16[c3]);
-    const isUniversalBuy =
-      isEmaBullCross &&
-      rsi[c3] >= 48 &&
-      rsi[c3] <= 78 &&
-      dpo[c3] > -1.8 &&
-      adx[c3] >= 16;
+    // Pyramiding spacing: allow sequential entries up to 999 (matching PineScript pyramiding = 999)
+    const canEnter = (i - lastEntryIndex >= 2) && (openPositions.length < 999);
 
-    // Pyramiding spacing: allow entry if at least 3 bars have passed since last entry
-    const canEnter = i - lastEntryIndex >= 3 && openPositions.length < 5;
-
-    if (canEnter && (isPrimary3CandleBuy || isUniversalBuy)) {
+    if (canEnter && finalBuyCondition) {
       const entryId = `BUY_${signals.length + 1}`;
       const entryPrice = closes[c3];
       const tp = Number((entryPrice * 1.02).toFixed(2));
-      const isSniper = isPrimary3CandleBuy;
       lastEntryIndex = i;
 
       markers.push({
         time: candles[c3].time,
         position: 'belowBar',
-        color: isSniper ? '#10b981' : '#059669',
+        color: '#10b981',
         shape: 'arrowUp',
-        text: isSniper
-          ? `3-CANDLE BUY @ ${currencySymbol}${entryPrice.toFixed(1)}`
-          : `BUY (EMA 8/16) @ ${currencySymbol}${entryPrice.toFixed(1)}`,
-        size: isSniper ? 2 : 1,
+        text: `3-CANDLE BUY @ ${currencySymbol}${entryPrice.toFixed(1)}`,
+        size: 2,
       });
 
       signals.push({
@@ -523,13 +519,13 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         time: candles[c3].time,
         timeString: candles[c3].timeString,
         targetPrice: tp,
-        tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
+        tier: '3-CANDLE',
       });
 
       const tradeRecord: PastTrade = {
         id: entryId,
         symbol: symbol || 'EQUITY',
-        tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
+        tier: '3-CANDLE',
         status: 'OPEN',
         entryTime: candles[c3].time,
         entryTimeString: formatISTTime(candles[c3].time),
@@ -548,7 +544,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
         entryIndex: c3,
         entryPrice,
         tp,
-        tier: isSniper ? '3-CANDLE' : 'EMA-TREND',
+        tier: '3-CANDLE',
         tradeIndex,
       });
     }
@@ -592,9 +588,9 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     rsi: Number((rsi[lastIndex] || 50).toFixed(1)),
     dpo: Number((dpo[lastIndex] || 0).toFixed(2)),
     adx: Number((adx[lastIndex] || 0).toFixed(1)),
-    c1Passed: (ema8[lastIndex - 2] > ema16[lastIndex - 2]) && (rsi[lastIndex - 2] < 70) && (dpo[lastIndex - 2] > -2.5),
-    c2Passed: (rsi[lastIndex - 1] > 65 && rsi[lastIndex - 1] < 82) && (dpo[lastIndex - 1] > 0) && (adx[lastIndex - 1] > 20),
-    c3Passed: (dpo[lastIndex] > 0) && (adx[lastIndex] > 20) && (rsi[lastIndex] > 70),
+    c1Passed: (ema8[lastIndex - 2] > ema16[lastIndex - 2]) && (rsi[lastIndex - 2] > 70) && (dpo[lastIndex - 2] > -2.5),
+    c2Passed: (rsi[lastIndex - 1] > 70 && rsi[lastIndex - 1] < 80) && (dpo[lastIndex - 1] > 0) && (adx[lastIndex - 1] > 22),
+    c3Passed: (dpo[lastIndex] > dpo[lastIndex - 1]) && (adx[lastIndex] > 22) && (rsi[lastIndex] > 75),
     hasOpenPosition: openPositions.length > 0,
     openPositionEntryPrice: lastPos?.entryPrice,
     openPositionTpPrice: lastPos?.tp,

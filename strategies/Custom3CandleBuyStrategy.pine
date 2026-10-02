@@ -1,0 +1,171 @@
+//@version=5
+strategy("Custom 3-Candle Buy Strategy - Sequential (C1=-2 C2=-1 C3=0)",
+     overlay=true,
+     pyramiding = 999,
+     process_orders_on_close = true)
+
+// enforce 5-min timeframe
+if timeframe.period != "5"
+    runtime.error("This strategy must be run only on 5-minute charts.")
+
+// ─────────────────────────────────────────────
+// SETTINGS: Indicator Toggles
+// ─────────────────────────────────────────────
+show_ema         = input.bool(true,  "Show EMA Lines")
+show_rsi         = input.bool(true,  "Show RSI Values")
+show_dpo         = input.bool(true,  "Show DPO Values")
+show_adx         = input.bool(true,  "Show ADX Values")
+show_accdist     = input.bool(true,  "Show Acc/Dist Values")
+show_dashboard   = input.bool(true,  "Show Dashboard Table")
+show_performance = input.bool(true,  "Show Performance Panel")
+
+// ─────────────────────────────────────────────
+// INDICATORS (existing unchanged code)
+// ─────────────────────────────────────────────
+ema8_series  = ta.ema(close, 8)
+ema16_series = ta.ema(close, 16)
+rsi_series   = ta.rsi(close, 14)
+dpo_series   = close - ta.sma(close, 20)
+
+len = 14
+upMove  = high - high[1]
+downMove = low[1] - low
+plusDM = (upMove > downMove and upMove > 0) ? upMove : 0.0
+minusDM = (downMove > upMove and downMove > 0) ? downMove : 0.0
+atr = ta.rma(ta.tr, len)
+smPlus = ta.rma(plusDM, len)
+smMinus = ta.rma(minusDM, len)
+plusDI = 100 * (smPlus / atr)
+minusDI = 100 * (smMinus / atr)
+dx = 100 * math.abs(plusDI - minusDI) / math.max((plusDI + minusDI), 0.000001)
+adx_series = ta.rma(dx, len)
+
+mf_multiplier = (high != low) ? ((close - low) - (high - close)) / (high - low) : 0.0
+mf_volume = mf_multiplier * volume
+ad_series = ta.cum(mf_volume)
+
+vol0 = volume
+vol1 = volume[1]
+vol2 = volume[2]
+
+// Daily highest volume
+is_new_day = ta.change(time("D")) != 0
+var float highestVolToday = 0.0
+if is_new_day
+    highestVolToday := volume
+else
+    highestVolToday := math.max(highestVolToday, volume)
+highestVolToday_c2 = highestVolToday[2]
+
+// Candle-specific values
+ema8_c1  = ema8_series[2]
+ema16_c1 = ema16_series[2]
+ema8_c2  = ema8_series[1]
+ema16_c2 = ema16_series[1]
+ema8_c3  = ema8_series
+ema16_c3 = ema16_series
+
+rsi_c1 = rsi_series[2]
+rsi_c2 = rsi_series[1]
+rsi_c3 = rsi_series
+
+dpo_c1 = dpo_series[2]
+dpo_c2 = dpo_series[1]
+dpo_c3 = dpo_series
+
+adx_c1 = adx_series[2]
+adx_c2 = adx_series[1]
+adx_c3 = adx_series
+
+ad_c1 = ad_series[2]
+ad_c2 = ad_series[1]
+ad_c3 = ad_series
+
+vol_c1 = vol2
+vol_c2 = vol1
+vol_c3 = vol0
+
+// Candle conditions
+ema_cross_c1 = ta.crossover(ema8_series, ema16_series)[2] or (ema8_c1 > ema16_c1)
+candle1_cond = (ema_cross_c1) and (rsi_c1 > 70) and (dpo_c1 > -2.5)
+
+candle2_cond = (vol_c2 >= highestVolToday_c2) and (rsi_c2 > 70 and rsi_c2 < 80) and
+               (vol_c2 > vol_c1) and (dpo_c2 > 0) and (dpo_c2 > dpo_c1) and
+               (adx_c2 > 22) and (ad_c2 > ad_c1)
+
+vol_condition_c3 = (vol_c3 > vol_c1) and (vol_c3 < vol_c2 or vol_c3 > vol_c2)
+candle3_cond = vol_condition_c3 and (dpo_c3 > dpo_c2) and (adx_c3 > 22) and
+               (ad_c3 > ad_c2) and (rsi_c3 > 75)
+
+final_buy_condition = candle1_cond and candle2_cond and candle3_cond
+
+// ─────────────────────────────────────────────
+// AUTO BACKTEST WINDOW: last 1 year
+// ─────────────────────────────────────────────
+one_year_ms   = 365 * 24 * 60 * 60 * 1000
+in_date_range = (time >= timenow - one_year_ms)
+
+// ─────────────────────────────────────────────
+// UNIQUE ENTRY ID FOR EVERY TRADE
+// ─────────────────────────────────────────────
+new_id = "BUY_" + str.tostring(strategy.opentrades + strategy.closedtrades + 1)
+
+// ─────────────────────────────────────────────
+// ENTRY (multiple trades allowed)
+// ─────────────────────────────────────────────
+entry_placed = false
+if in_date_range and final_buy_condition
+    strategy.entry(new_id, strategy.long)
+    entry_placed := true
+
+// ─────────────────────────────────────────────
+// EXIT: Independent TP per trade (2% take profit) + global "next highest green candle" close
+// ─────────────────────────────────────────────
+// 1) Per-entry TP: create exit order for each entry ID as before (2% TP)
+if strategy.position_size != 0
+    avg = strategy.position_avg_price
+    tp  = avg * 1.02      // 2% Take Profit
+    // Create per-entry TP exit (this will apply per entry id)
+    strategy.exit("EXIT_" + new_id,
+                  from_entry  = new_id,
+                  limit       = tp)
+
+// 2) Green-high tracker: when first position opens, start tracking highs that follow.
+//    If a green candle occurs whose high is greater than ALL previous highs since tracking began,
+//    close all open positions (this implements Option A in a practical, reliable way).
+var bool tracking_highs = false
+var float tracked_high = na      // highest high seen since tracking started (excludes current bar when checking)
+var float prev_highest = na
+
+// Start tracking when positions open and we were not already tracking
+if strategy.opentrades > 0 and not tracking_highs
+    tracking_highs := true
+    // initialize tracked_high to previous bar's high so that first green candle must exceed prior highs
+    tracked_high := high[1]
+    prev_highest := tracked_high
+
+// When no open trades, reset tracking
+if strategy.opentrades == 0
+    tracking_highs := false
+    tracked_high := na
+    prev_highest := na
+
+// Update tracked_high each bar (after we've recorded prev_highest from previous step)
+if tracking_highs
+    // prev_highest stores the max high seen BEFORE this bar (used for comparison)
+    prev_highest := tracked_high
+    tracked_high := math.max(tracked_high, high)
+
+// Now check the green-high exit condition on the current bar:
+// - Current bar must be green (close > open)
+// - Current high must be > prev_highest (i.e., higher than all highs since tracking started, EXCLUDING current bar)
+green_high_condition = tracking_highs and (close > open) and (high > prev_highest)
+
+// If condition met, close all open positions immediately.
+if green_high_condition
+    // close all open positions (this will close every entry id's position)
+    strategy.close_all(comment = "GREEN_HIGH_EXIT")
+    // reset tracking (will be re-enabled automatically when new open trades arrive)
+    tracking_highs := false
+    tracked_high := na
+    prev_highest := na
