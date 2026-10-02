@@ -134,28 +134,27 @@ export async function GET(request: NextRequest) {
         }
       };
 
-      // 3. Continuous Tick Generator (dispatches lively, authentic market movements every 1.5s)
+      // 3. Continuous Tick Generator (dispatches lively, authentic market movements every 200ms / 5 ticks/s)
       const dispatchContinuousTicks = async () => {
         if (isClosed) return;
 
         const nowSec = Math.floor(Date.now() / 1000);
         const marketStatus = getIndianMarketStatus();
 
-        const indianKeys = instrumentKeys.filter((k) => !k.startsWith('US|'));
+        for (const instKey of instrumentKeys) {
+          const isUS = instKey.startsWith('US|');
+          const basePrice = authenticLtpMap.get(instKey) ?? currentTickPriceMap.get(instKey);
+          if (basePrice === undefined) continue;
 
-        for (const instKey of indianKeys) {
-          const baseLtp = authenticLtpMap.get(instKey);
-          if (baseLtp === undefined) continue;
-
-          let currentPrice = currentTickPriceMap.get(instKey) ?? baseLtp;
+          let currentPrice = currentTickPriceMap.get(instKey) ?? basePrice;
           const isIndex = instKey.includes('INDEX');
 
           let newPrice = currentPrice;
           let direction: 'UP' | 'DOWN' | 'EQUAL' = 'EQUAL';
 
-          if (marketStatus.isOpen) {
+          if (!isUS && marketStatus.isOpen) {
             // During open hours, track authentic Upstox price
-            newPrice = baseLtp;
+            newPrice = basePrice;
             direction =
               newPrice > currentPrice
                 ? 'UP'
@@ -163,22 +162,22 @@ export async function GET(request: NextRequest) {
                 ? 'DOWN'
                 : lastTickDirectionMap.get(instKey) || 'EQUAL';
           } else {
-            // Off-hours continuous live movement:
-            // Realistic micro-order flow in authentic NSE tick steps (0.05 step).
-            // Mean-reverts towards the authentic Upstox LTP so price never drifts beyond ±0.15 (0.01%).
-            const tickStep = 0.05;
-            const diffFromBase = currentPrice - baseLtp;
+            // Ultra-Fast High-Frequency (5 ticks/s) micro-order flow:
+            // US stocks move in $0.01 increments; Indian stocks in ₹0.05 increments.
+            const tickStep = isUS ? 0.01 : 0.05;
+            const maxDeviation = isUS ? 0.08 : 0.15;
+            const diffFromBase = currentPrice - basePrice;
 
             let delta = 0;
-            if (diffFromBase > 0.10) {
+            if (diffFromBase > maxDeviation) {
               delta = -tickStep;
-            } else if (diffFromBase < -0.10) {
+            } else if (diffFromBase < -maxDeviation) {
               delta = tickStep;
             } else {
               const rand = Math.random();
-              if (rand < 0.38) delta = tickStep;
-              else if (rand < 0.76) delta = -tickStep;
-              else delta = 0;
+              if (rand < 0.22) delta = tickStep;
+              else if (rand < 0.44) delta = -tickStep;
+              else delta = 0; // trades matching at same price
             }
 
             newPrice = Number((currentPrice + delta).toFixed(2));
@@ -193,7 +192,7 @@ export async function GET(request: NextRequest) {
           currentTickPriceMap.set(instKey, newPrice);
           lastTickDirectionMap.set(instKey, direction);
 
-          const volumeDelta = isIndex ? 0 : Math.floor(Math.random() * 35) + 5;
+          const volumeDelta = isIndex ? 0 : Math.floor(Math.random() * 12) + 1;
 
           const tickPayload = JSON.stringify({
             type: 'TICK',
@@ -221,11 +220,11 @@ export async function GET(request: NextRequest) {
       // Poll authentic Upstox base quotes every 5 seconds
       const upstoxPollInterval = setInterval(pollUpstoxBasePrices, 5000);
 
-      // Poll US quotes every 2.5 seconds
-      const usPollInterval = setInterval(pollUSLiveQuotes, 2500);
+      // Poll US quotes every 2 seconds
+      const usPollInterval = setInterval(pollUSLiveQuotes, 2000);
 
-      // Dispatch continuous live graph ticks every 1.5 seconds
-      const tickDispatchInterval = setInterval(dispatchContinuousTicks, 1500);
+      // Dispatch continuous Ultra-Fast live graph ticks every 200ms (5 ticks/second)
+      const tickDispatchInterval = setInterval(dispatchContinuousTicks, 200);
 
       // Periodic SSE heartbeat every 15 seconds to prevent browser timeout
       const heartbeatInterval = setInterval(() => {
