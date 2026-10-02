@@ -31,7 +31,7 @@ export const TradesHistoryModal: React.FC = () => {
     tradesModalSymbol || 'ALL'
   );
   const [filterType, setFilterType] = useState<
-    'ALL' | 'WINNERS' | 'LOSERS' | 'OPEN' | '3-CANDLE' | 'EMA-TREND'
+    'ALL' | 'WINNERS' | 'LOSERS' | 'OPEN'
   >('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -82,12 +82,6 @@ export const TradesHistoryModal: React.FC = () => {
       if (filterType === 'OPEN' && t.status !== 'OPEN') {
         return false;
       }
-      if (filterType === '3-CANDLE' && t.tier !== '3-CANDLE') {
-        return false;
-      }
-      if (filterType === 'EMA-TREND' && t.tier !== 'EMA-TREND') {
-        return false;
-      }
 
       // Search query
       if (searchQuery.trim()) {
@@ -95,8 +89,7 @@ export const TradesHistoryModal: React.FC = () => {
         const matchId = t.id.toLowerCase().includes(q);
         const matchSym = t.symbol.toLowerCase().includes(q);
         const matchReason = (t.exitReason || '').toLowerCase().includes(q);
-        const matchTier = t.tier.toLowerCase().includes(q);
-        return matchId || matchSym || matchReason || matchTier;
+        return matchId || matchSym || matchReason;
       }
 
       return true;
@@ -311,26 +304,6 @@ export const TradesHistoryModal: React.FC = () => {
               }`}
             >
               Open ({stats.openCount})
-            </button>
-            <button
-              onClick={() => setFilterType('3-CANDLE')}
-              className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                filterType === '3-CANDLE'
-                  ? 'bg-cyan-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              3-Candle Primary
-            </button>
-            <button
-              onClick={() => setFilterType('EMA-TREND')}
-              className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                filterType === 'EMA-TREND'
-                  ? 'bg-indigo-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              EMA Momentum
             </button>
           </div>
 

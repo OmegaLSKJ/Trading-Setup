@@ -414,29 +414,11 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                 onClick={(e) => e.stopPropagation()}
                 className="absolute right-0 top-full mt-1 w-44 bg-[#1e293b] border border-slate-700 rounded shadow-2xl z-50 py-1.5 text-xs text-slate-200"
               >
-                <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60">
-                  Moving Averages
+                <div className="px-3 py-1 font-semibold text-[10px] text-amber-400 uppercase tracking-wider border-b border-slate-700/60">
+                  Custom 3-Candle Strategy
                 </div>
-                {(['ema8', 'ema16', 'ema20', 'ema50', 'ema200'] as (keyof IndicatorConfig)[]).map((ind) => (
-                  <label
-                    key={ind}
-                    className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer"
-                  >
-                    <span>{ind.toUpperCase()}</span>
-                    <input
-                      type="checkbox"
-                      checked={panel.indicators[ind]}
-                      onChange={() => toggleChartIndicator(panel.id, ind)}
-                      className="rounded accent-emerald-500 cursor-pointer"
-                    />
-                  </label>
-                ))}
-
-                <div className="px-3 py-1 font-semibold text-[10px] text-amber-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
-                  Strategy Mapping
-                </div>
-                <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
-                  <span className="text-amber-300 font-medium">BUY/SELL Signals</span>
+                <label className="flex items-center justify-between px-3 py-1.5 hover:bg-slate-700/60 cursor-pointer">
+                  <span className="text-amber-300 font-semibold">Signals &amp; 2% TP Exits</span>
                   <input
                     type="checkbox"
                     checked={panel.indicators.strategy}
@@ -446,19 +428,28 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                 </label>
 
                 <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
-                  Overlays & Volume
+                  Strategy EMAs
+                </div>
+                {(['ema8', 'ema16'] as (keyof IndicatorConfig)[]).map((ind) => (
+                  <label
+                    key={ind}
+                    className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer"
+                  >
+                    <span>{ind === 'ema8' ? 'EMA 8 (Fast)' : 'EMA 16 (Slow)'}</span>
+                    <input
+                      type="checkbox"
+                      checked={panel.indicators[ind]}
+                      onChange={() => toggleChartIndicator(panel.id, ind)}
+                      className="rounded accent-emerald-500 cursor-pointer"
+                    />
+                  </label>
+                ))}
+
+                <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
+                  Volume Tracking
                 </div>
                 <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
-                  <span>VWAP</span>
-                  <input
-                    type="checkbox"
-                    checked={panel.indicators.vwap}
-                    onChange={() => toggleChartIndicator(panel.id, 'vwap')}
-                    className="rounded accent-emerald-500 cursor-pointer"
-                  />
-                </label>
-                <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
-                  <span>Volume Bar</span>
+                  <span>Volume Histogram</span>
                   <input
                     type="checkbox"
                     checked={panel.indicators.volume}

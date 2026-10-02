@@ -17,14 +17,14 @@ export interface StrategySignal {
   timeString: string;
   targetPrice: number;
   exitReason?: string;
-  tier: '3-CANDLE' | 'EMA-TREND';
+  tier: '3-CANDLE';
   pnlPercent?: number;
 }
 
 export interface PastTrade {
   id: string;
   symbol: string;
-  tier: '3-CANDLE' | 'EMA-TREND';
+  tier: '3-CANDLE';
   status: 'OPEN' | 'CLOSED';
   entryTime: number;
   entryTimeString: string;
@@ -301,7 +301,7 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     entryIndex: number;
     entryPrice: number;
     tp: number;
-    tier: '3-CANDLE' | 'EMA-TREND';
+    tier: '3-CANDLE';
     tradeIndex: number;
   }
 
