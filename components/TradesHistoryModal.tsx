@@ -20,6 +20,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
+import { formatDateTimeWithZone, getTimezoneShortLabel, DEFAULT_TIMEZONE } from '@/lib/timezones';
+
 export const TradesHistoryModal: React.FC = () => {
   const {
     isTradesModalOpen,
@@ -28,7 +30,10 @@ export const TradesHistoryModal: React.FC = () => {
     symbolTrades,
     charts,
     navigateToTrade,
+    selectedTimezone,
   } = useDashboardStore();
+
+  const tzShort = getTimezoneShortLabel(selectedTimezone || DEFAULT_TIMEZONE);
 
   const [selectedSymbol, setSelectedSymbol] = useState<string>(
     tradesModalSymbol || 'ALL'
@@ -155,10 +160,10 @@ export const TradesHistoryModal: React.FC = () => {
       'Symbol',
       'Strategy Tier',
       'Status',
-      'Entry Time (IST)',
+      `Entry Time (${tzShort})`,
       'Entry Price',
       'Target Price (+2%)',
-      'Exit Time (IST)',
+      `Exit Time (${tzShort})`,
       'Exit Price',
       'Exit Reason',
       'Duration (Bars)',
@@ -173,10 +178,10 @@ export const TradesHistoryModal: React.FC = () => {
       t.symbol,
       t.tier,
       t.status,
-      `"${t.entryTimeString}"`,
+      `"${formatDateTimeWithZone(t.entryTime, selectedTimezone)}"`,
       t.entryPrice.toFixed(2),
       t.targetPrice.toFixed(2),
-      t.exitTimeString ? `"${t.exitTimeString}"` : 'OPEN',
+      t.exitTime ? `"${formatDateTimeWithZone(t.exitTime, selectedTimezone)}"` : 'OPEN',
       t.exitPrice ? t.exitPrice.toFixed(2) : '',
       `"${t.exitReason || ''}"`,
       t.durationBars,
@@ -481,10 +486,10 @@ export const TradesHistoryModal: React.FC = () => {
                     <th className="py-2.5 px-3 min-w-[110px]">Symbol</th>
                     <th className="py-2.5 px-3 min-w-[100px]">Tier</th>
                     <th className="py-2.5 px-3 min-w-[90px]">Status</th>
-                    <th className="py-2.5 px-3 min-w-[180px]">Entry Time (IST)</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Entry Time ({tzShort})</th>
                     <th className="py-2.5 px-3 text-right min-w-[110px]">Entry Price</th>
                     <th className="py-2.5 px-3 text-right min-w-[110px]">Target (+2%)</th>
-                    <th className="py-2.5 px-3 min-w-[180px]">Exit Time (IST)</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Exit Time ({tzShort})</th>
                     <th className="py-2.5 px-3 text-right min-w-[110px]">Exit Price</th>
                     <th className="py-2.5 px-3 min-w-[180px]">Exit Reason</th>
                     <th className="py-2.5 px-3 text-center min-w-[120px]">Duration</th>
@@ -496,6 +501,8 @@ export const TradesHistoryModal: React.FC = () => {
                     const isWin = t.pnlPercent > 0;
                     const isLoss = t.pnlPercent < 0;
                     const isOpen = t.status === 'OPEN';
+                    const entryFormatted = formatDateTimeWithZone(t.entryTime, selectedTimezone);
+                    const exitFormatted = t.exitTime ? formatDateTimeWithZone(t.exitTime, selectedTimezone) : null;
 
                     return (
                       <tr
@@ -504,7 +511,7 @@ export const TradesHistoryModal: React.FC = () => {
                           navigateToTrade(t.symbol, t.entryTime, t.id);
                         }}
                         className="hover:bg-purple-950/40 hover:border-purple-500/50 cursor-pointer transition-all group"
-                        title={`Click to jump to ${t.symbol} chart at ${t.entryTimeString}`}
+                        title={`Click to jump to ${t.symbol} chart at ${entryFormatted}`}
                       >
                         {/* ID */}
                         <td className="py-2.5 px-3 font-semibold text-slate-300 whitespace-nowrap">
@@ -544,9 +551,9 @@ export const TradesHistoryModal: React.FC = () => {
                           </span>
                         </td>
 
-                        {/* Entry Time (IST) */}
+                        {/* Entry Time */}
                         <td className="py-2.5 px-3 text-slate-300 font-sans whitespace-nowrap">
-                          {t.entryTimeString}
+                          {entryFormatted}
                         </td>
 
                         {/* Entry Price */}
@@ -561,9 +568,9 @@ export const TradesHistoryModal: React.FC = () => {
                           {t.targetPrice.toFixed(2)}
                         </td>
 
-                        {/* Exit Time (IST) */}
+                        {/* Exit Time */}
                         <td className="py-2.5 px-3 text-slate-300 font-sans whitespace-nowrap">
-                          {t.exitTimeString || (
+                          {exitFormatted || (
                             <span className="text-amber-400 font-mono text-[10px]">
                               Holding (Active)
                             </span>

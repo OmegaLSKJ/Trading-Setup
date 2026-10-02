@@ -135,23 +135,10 @@ function calculateSMASeries(values: number[], period: number): number[] {
   return result;
 }
 
-export function formatISTTime(unixSec: number): string {
-  try {
-    const d = new Date(unixSec * 1000);
-    return (
-      d.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-      }) + ' IST'
-    );
-  } catch {
-    return new Date(unixSec * 1000).toLocaleString();
-  }
+import { formatDateTimeWithZone, DEFAULT_TIMEZONE } from './timezones';
+
+export function formatISTTime(unixSec: number, timezone = DEFAULT_TIMEZONE): string {
+  return formatDateTimeWithZone(unixSec, timezone);
 }
 
 /**

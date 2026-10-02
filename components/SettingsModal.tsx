@@ -3,7 +3,8 @@
 import React from 'react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { AutoRefreshInterval } from '@/lib/types';
-import { Settings, X, ShieldCheck, Activity } from 'lucide-react';
+import { Settings, X, ShieldCheck, Activity, Globe } from 'lucide-react';
+import { TIMEZONE_OPTIONS } from '@/lib/timezones';
 
 export const SettingsModal: React.FC = () => {
   const {
@@ -15,6 +16,8 @@ export const SettingsModal: React.FC = () => {
     setAutoRefreshInterval,
     connectionStatus,
     connectionDetails,
+    selectedTimezone,
+    setTimezone,
   } = useDashboardStore();
 
   if (!isSettingsModalOpen) return null;
@@ -128,14 +131,27 @@ export const SettingsModal: React.FC = () => {
             <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2">
               Market Configuration
             </div>
-            <div className="bg-[#090d16] p-3 rounded border border-slate-800 space-y-1.5 text-slate-300">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Market Timezone:</span>
-                <span className="font-mono font-medium text-white">Asia/Kolkata (IST +05:30)</span>
+            <div className="bg-[#090d16] p-3 rounded border border-slate-800 space-y-2.5 text-slate-300">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 text-xs flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Chart Timezone:</span>
+                </span>
+                <select
+                  value={selectedTimezone || 'Asia/Kolkata'}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="bg-slate-800 text-white border border-slate-700 rounded px-2.5 py-1 text-xs font-mono focus:outline-hidden focus:border-sky-500 cursor-pointer max-w-[240px]"
+                >
+                  {TIMEZONE_OPTIONS.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.shortLabel} — {tz.label} ({tz.offset})
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between text-xs">
                 <span className="text-slate-500">Exchange Feeds:</span>
-                <span className="font-medium text-white">NSE, BSE, NFO, MCX</span>
+                <span className="font-medium text-white">NSE, BSE, NASDAQ, NYSE, MCX</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Candle Source:</span>

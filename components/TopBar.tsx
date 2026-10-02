@@ -16,7 +16,9 @@ import {
   ChevronDown,
   Target,
   History,
+  Globe,
 } from 'lucide-react';
+import { TIMEZONE_OPTIONS, getTimezoneOption } from '@/lib/timezones';
 
 const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string }[] = [
   { mode: '1', label: '1 Chart', icon: '■' },
@@ -46,6 +48,8 @@ export const TopBar: React.FC = () => {
     setConnectionStatus,
     setTradesModalOpen,
     symbolTrades,
+    selectedTimezone,
+    setTimezone,
   } = useDashboardStore();
 
   const isStrategyActive = charts.some((c) => c.indicators.strategy);
@@ -57,6 +61,9 @@ export const TopBar: React.FC = () => {
 
   const [isLayoutDropdownOpen, setIsLayoutDropdownOpen] = useState(false);
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
+  const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false);
+
+  const currentTimezoneOpt = getTimezoneOption(selectedTimezone || 'Asia/Kolkata');
 
   // Poll health endpoint periodically
   useEffect(() => {
@@ -297,6 +304,65 @@ export const TopBar: React.FC = () => {
             </div>
           );
         })()}
+
+        {/* Global Timezone Switcher */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setIsTimezoneDropdownOpen(!isTimezoneDropdownOpen);
+              setIsLayoutDropdownOpen(false);
+              setIsStatusPopoverOpen(false);
+            }}
+            className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
+            title={`Chart Timezone: ${currentTimezoneOpt.label} (${currentTimezoneOpt.offset})`}
+          >
+            <Globe className="w-3.5 h-3.5 text-sky-400" />
+            <span className="font-mono font-medium text-sky-300 text-[11px]">
+              {currentTimezoneOpt.shortLabel}
+            </span>
+            <ChevronDown className="w-3 h-3 text-slate-400" />
+          </button>
+
+          {isTimezoneDropdownOpen && (
+            <div
+              className="absolute right-0 mt-1.5 w-64 bg-[#0d1322] border border-slate-700/80 rounded-lg shadow-2xl z-50 py-1 max-h-80 overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-3 py-1.5 border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-between">
+                <span>Chart Timezone</span>
+                <span className="text-emerald-400 font-mono text-[9px]">LIVE SYNC</span>
+              </div>
+              {TIMEZONE_OPTIONS.map((tz) => {
+                const isSelected = tz.value === (selectedTimezone || 'Asia/Kolkata');
+                return (
+                  <button
+                    key={tz.value}
+                    onClick={() => {
+                      setTimezone(tz.value);
+                      setIsTimezoneDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-slate-800/80 transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-sky-950/60 text-sky-300 font-semibold border-l-2 border-sky-400'
+                        : 'text-slate-300'
+                    }`}
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-bold text-white">{tz.shortLabel}</span>
+                        <span className="text-[11px] text-slate-400 truncate">{tz.region}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">{tz.label}</div>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                      {tz.offset}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Connection Status Badge */}
         <div className="relative">

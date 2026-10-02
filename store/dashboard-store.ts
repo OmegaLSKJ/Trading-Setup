@@ -142,6 +142,9 @@ interface DashboardState {
   recordTradesForSymbol: (symbol: string, trades: PastTrade[]) => void;
   navigateToTrade: (symbol: string, time: number, id: string) => void;
   clearTradeNavigation: () => void;
+  // Timezone setting
+  selectedTimezone: string;
+  setTimezone: (timezone: string) => void;
 
   // Hydration from LocalStorage
   loadPersistedState: () => void;
@@ -241,6 +244,14 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         isTradesModalOpen: false,
         targetTradeNavigation: { symbol, time, id },
       });
+    }
+  },
+
+  selectedTimezone: 'Asia/Kolkata',
+  setTimezone: (timezone: string) => {
+    set({ selectedTimezone: timezone });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('upstox_timezone', timezone);
     }
   },
 
@@ -663,6 +674,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       const refresh = localStorage.getItem('upstox_auto_refresh');
       if (refresh) {
         set({ autoRefreshInterval: parseInt(refresh, 10) as AutoRefreshInterval });
+      }
+
+      const savedTz = localStorage.getItem('upstox_timezone');
+      if (savedTz) {
+        set({ selectedTimezone: savedTz });
       }
 
       const active = localStorage.getItem('upstox_active_dashboard');

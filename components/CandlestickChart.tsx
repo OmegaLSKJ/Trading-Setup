@@ -30,6 +30,7 @@ import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { liveStreamManager, LiveTick } from '@/lib/live-stream';
 import { getIndianMarketStatus } from '@/lib/market-hours';
+import { formatDateTimeWithZone, getTimezoneShortLabel, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
@@ -101,7 +102,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const indicatorsRef = useRef(indicators);
     indicatorsRef.current = indicators;
 
-    const { syncSettings } = useDashboardStore();
+    const syncSettings = useDashboardStore((s) => s.syncSettings);
+    const selectedTimezone = useDashboardStore((s) => s.selectedTimezone) || DEFAULT_TIMEZONE;
 
     useImperativeHandle(ref, () => ({
       resetScale: () => {
@@ -256,20 +258,10 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           },
         },
         localization: {
-          locale: 'en-IN',
+          locale: 'en-US',
           dateFormat: 'dd MMM yyyy',
           timeFormatter: (time: number) => {
-            const date = new Date(time * 1000);
-            return (
-              date.toLocaleString('en-IN', {
-                timeZone: 'Asia/Kolkata',
-                day: '2-digit',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true,
-              }) + ' IST'
-            );
+            return formatDateTimeWithZone(time, selectedTimezone);
           },
         },
         timeScale: {
@@ -281,27 +273,28 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           minBarSpacing: 3,
           tickMarkFormatter: (time: number, tickMarkType: number) => {
             const date = new Date(time * 1000);
+            const tz = selectedTimezone;
             if (tickMarkType === 0) {
-              return date.toLocaleDateString('en-IN', {
-                timeZone: 'Asia/Kolkata',
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
                 year: 'numeric',
               });
             }
             if (tickMarkType === 1) {
-              return date.toLocaleDateString('en-IN', {
-                timeZone: 'Asia/Kolkata',
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
                 month: 'short',
               });
             }
             if (tickMarkType === 2) {
-              return date.toLocaleDateString('en-IN', {
-                timeZone: 'Asia/Kolkata',
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
                 day: '2-digit',
                 month: 'short',
               });
             }
-            return date.toLocaleTimeString('en-IN', {
-              timeZone: 'Asia/Kolkata',
+            return date.toLocaleTimeString('en-US', {
+              timeZone: tz,
               hour: '2-digit',
               minute: '2-digit',
               hour12: false,
@@ -364,17 +357,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
         if (candleData) {
           const timeNum = Number(param.time);
-          const date = new Date(timeNum * 1000);
-          const timeStr =
-            date.toLocaleString('en-IN', {
-              timeZone: 'Asia/Kolkata',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: true,
-            }) + ' IST';
+          const timeStr = formatDateTimeWithZone(timeNum, selectedTimezone);
 
           const currentHover = {
             open: candleData.open,
@@ -433,6 +416,54 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         chartApiRef.current = null;
       };
     }, []);
+
+    // Dynamically reconfigure chart time formatters when selectedTimezone changes
+    useEffect(() => {
+      const chart = chartApiRef.current;
+      if (!chart) return;
+
+      const tz = selectedTimezone || DEFAULT_TIMEZONE;
+
+      chart.applyOptions({
+        localization: {
+          locale: 'en-US',
+          dateFormat: 'dd MMM yyyy',
+          timeFormatter: (time: number) => {
+            return formatDateTimeWithZone(time, tz);
+          },
+        },
+        timeScale: {
+          tickMarkFormatter: (time: number, tickMarkType: number) => {
+            const date = new Date(time * 1000);
+            if (tickMarkType === 0) {
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
+                year: 'numeric',
+              });
+            }
+            if (tickMarkType === 1) {
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
+                month: 'short',
+              });
+            }
+            if (tickMarkType === 2) {
+              return date.toLocaleDateString('en-US', {
+                timeZone: tz,
+                day: '2-digit',
+                month: 'short',
+              });
+            }
+            return date.toLocaleTimeString('en-US', {
+              timeZone: tz,
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            });
+          },
+        },
+      });
+    }, [selectedTimezone]);
 
     // Cross-chart time range sync listener
     useEffect(() => {
@@ -913,16 +944,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       low: latestCandle.low,
       close: currentLivePrice ?? latestCandle.close,
       volume: latestCandle.volume,
-      timeStr:
-        new Date(latestCandle.time * 1000).toLocaleString('en-IN', {
-          timeZone: 'Asia/Kolkata',
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
-        }) + ' IST',
+      timeStr: formatDateTimeWithZone(latestCandle.time, selectedTimezone),
     } : null);
 
     const displayIndicators = hoverIndicators || liveIndicators;

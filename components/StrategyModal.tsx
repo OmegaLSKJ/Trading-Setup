@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StrategySummary } from '@/lib/strategy';
 import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap, History, ExternalLink, ArrowUpRight } from 'lucide-react';
 import { useDashboardStore } from '@/store/dashboard-store';
+import { formatDateTimeWithZone, getTimezoneShortLabel, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
 interface Props {
   isOpen: boolean;
@@ -17,7 +18,8 @@ export const StrategyModal: React.FC<Props> = ({
   strategySummary,
 }) => {
   const [activeTab, setActiveTab] = useState<'RULES' | 'TRADES'>('RULES');
-  const { setTradesModalOpen, navigateToTrade } = useDashboardStore();
+  const { setTradesModalOpen, navigateToTrade, selectedTimezone } = useDashboardStore();
+  const tzShort = getTimezoneShortLabel(selectedTimezone || DEFAULT_TIMEZONE);
 
   if (!isOpen) return null;
 
@@ -158,10 +160,10 @@ export const StrategyModal: React.FC<Props> = ({
                         <th className="py-2 px-3 min-w-[80px]">#ID</th>
                         <th className="py-2 px-3 min-w-[90px]">Tier</th>
                         <th className="py-2 px-3 min-w-[80px]">Status</th>
-                        <th className="py-2 px-3 min-w-[170px]">Entry Time (IST)</th>
+                        <th className="py-2 px-3 min-w-[170px]">Entry Time ({tzShort})</th>
                         <th className="py-2 px-3 text-right min-w-[90px]">Entry</th>
                         <th className="py-2 px-3 text-right min-w-[90px]">Target (+2%)</th>
-                        <th className="py-2 px-3 min-w-[170px]">Exit Time (IST)</th>
+                        <th className="py-2 px-3 min-w-[170px]">Exit Time ({tzShort})</th>
                         <th className="py-2 px-3 text-right min-w-[90px]">Exit</th>
                         <th className="py-2 px-3 min-w-[160px]">Exit Reason</th>
                         <th className="py-2 px-3 text-center min-w-[70px]">Bars</th>
@@ -172,6 +174,8 @@ export const StrategyModal: React.FC<Props> = ({
                       {trades.map((t, idx) => {
                         const isWin = t.pnlPercent > 0;
                         const isLoss = t.pnlPercent < 0;
+                        const entryFormatted = formatDateTimeWithZone(t.entryTime, selectedTimezone);
+                        const exitFormatted = t.exitTime ? formatDateTimeWithZone(t.exitTime, selectedTimezone) : null;
                         return (
                           <tr
                             key={`${t.id}-${idx}`}
@@ -180,7 +184,7 @@ export const StrategyModal: React.FC<Props> = ({
                               navigateToTrade(tradingSymbol, t.entryTime, t.id);
                             }}
                             className="hover:bg-purple-950/40 hover:border-purple-500/50 cursor-pointer transition-all group"
-                            title={`Click to jump to ${tradingSymbol} chart at ${t.entryTimeString}`}
+                            title={`Click to jump to ${tradingSymbol} chart at ${entryFormatted}`}
                           >
                             <td className="py-2 px-3 text-slate-300 font-semibold whitespace-nowrap">
                               <div className="flex items-center gap-1">
@@ -200,10 +204,10 @@ export const StrategyModal: React.FC<Props> = ({
                               {t.status}
                             </span>
                           </td>
-                          <td className="py-2 px-3 font-sans text-slate-300">{t.entryTimeString}</td>
+                          <td className="py-2 px-3 font-sans text-slate-300">{entryFormatted}</td>
                           <td className="py-2 px-3 text-right text-white font-bold">{t.currencySymbol}{t.entryPrice.toFixed(2)}</td>
                           <td className="py-2 px-3 text-right text-emerald-400">{t.currencySymbol}{t.targetPrice.toFixed(2)}</td>
-                          <td className="py-2 px-3 font-sans text-slate-300">{t.exitTimeString || 'Holding (Active)'}</td>
+                          <td className="py-2 px-3 font-sans text-slate-300">{exitFormatted || 'Holding (Active)'}</td>
                           <td className="py-2 px-3 text-right">{t.exitPrice ? `${t.currencySymbol}${t.exitPrice.toFixed(2)}` : '—'}</td>
                           <td className="py-2 px-3 font-sans text-slate-300">{t.exitReason || 'In Progress'}</td>
                           <td className="py-2 px-3 text-center text-slate-400">{t.durationBars}</td>
