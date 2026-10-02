@@ -17,7 +17,7 @@ export const SymbolSearchModal: React.FC = () => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Instrument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [filterSegment, setFilterSegment] = useState<'ALL' | 'EQ' | 'INDEX' | 'FO'>('ALL');
+  const [filterSegment, setFilterSegment] = useState<'ALL' | 'EQ' | 'INDEX' | 'FO' | 'US'>('ALL');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,10 +47,26 @@ export const SymbolSearchModal: React.FC = () => {
     try {
       const res = await fetch(`/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`);
       const data = await res.json();
-      if (data.success && Array.isArray(data.instruments)) {
-        setResults(data.instruments);
-        setSelectedIndex(0);
+      let list = (data.success && Array.isArray(data.instruments)) ? data.instruments : [];
+
+      // If user typed a clean US ticker symbol (e.g. AAPL, NVDA, TSLA, SPY, MSFT)
+      const cleanQ = q.trim().toUpperCase();
+      if (cleanQ && /^[A-Z]{1,5}$/.test(cleanQ)) {
+        const hasExisting = list.some((i: any) => i.trading_symbol.toUpperCase() === cleanQ);
+        if (!hasExisting) {
+          list.unshift({
+            instrument_key: `US|${cleanQ}`,
+            trading_symbol: cleanQ,
+            name: `${cleanQ} (US Market)`,
+            exchange: 'NASDAQ',
+            segment: 'US_EQ',
+            instrument_type: 'EQ',
+          });
+        }
       }
+
+      setResults(list);
+      setSelectedIndex(0);
     } catch (e) {
       console.error('Failed to search instruments:', e);
     } finally {
@@ -60,6 +76,7 @@ export const SymbolSearchModal: React.FC = () => {
 
   const filteredResults = results.filter((item) => {
     if (filterSegment === 'ALL') return true;
+    if (filterSegment === 'US') return item.segment?.startsWith('US_') || item.instrument_key?.startsWith('US|');
     if (filterSegment === 'EQ') return item.segment === 'NSE_EQ' || item.segment === 'BSE_EQ';
     if (filterSegment === 'INDEX') return item.segment?.includes('INDEX');
     if (filterSegment === 'FO') return item.segment?.includes('FO');
@@ -111,7 +128,7 @@ export const SymbolSearchModal: React.FC = () => {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search Indian stock, index, F&O (e.g. RELIANCE, TCS, NIFTY 50)..."
+            placeholder="Search Indian stocks (RELIANCE, NIFTY 50) or US stocks (AAPL, TSLA, NVDA)..."
             className="flex-1 bg-transparent text-white text-sm focus:outline-hidden placeholder-slate-500 font-medium"
           />
           {isLoading && (
@@ -136,6 +153,16 @@ export const SymbolSearchModal: React.FC = () => {
             }`}
           >
             All
+          </button>
+          <button
+            onClick={() => setFilterSegment('US')}
+            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+              filterSegment === 'US'
+                ? 'bg-emerald-600 text-white font-medium'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            US Stocks
           </button>
           <button
             onClick={() => setFilterSegment('EQ')}

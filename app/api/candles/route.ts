@@ -58,13 +58,86 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const candles = await fetchCandleRange(
-      instrumentKey,
-      timeframe,
-      from,
-      to,
-      includeIntraday
-    );
+    let candles: any[] = [];
+
+    // Support US Stocks (e.g. US|AAPL, US|TSLA, US|NVDA)
+    if (instrumentKey.startsWith('US|')) {
+      const ticker = instrumentKey.replace('US|', '').toUpperCase();
+      let yInterval = '5m';
+      let yRange = '1mo';
+
+      switch (timeframe) {
+        case '1m':
+          yInterval = '1m';
+          yRange = '5d';
+          break;
+        case '3m':
+        case '5m':
+          yInterval = '5m';
+          yRange = '1mo';
+          break;
+        case '15m':
+          yInterval = '15m';
+          yRange = '1mo';
+          break;
+        case '30m':
+          yInterval = '30m';
+          yRange = '1mo';
+          break;
+        case '1h':
+          yInterval = '60m';
+          yRange = '3mo';
+          break;
+        case '1D':
+          yInterval = '1d';
+          yRange = '1y';
+          break;
+      }
+
+      const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${yInterval}&range=${yRange}`;
+      const yRes = await fetch(yUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      });
+
+      if (yRes.ok) {
+        const yJson = await yRes.json();
+        const resObj = yJson.chart?.result?.[0];
+        const timestamps = resObj?.timestamp || [];
+        const quote = resObj?.indicators?.quote?.[0] || {};
+
+        const map = new Map<number, any>();
+        for (let i = 0; i < timestamps.length; i++) {
+          const t = timestamps[i];
+          const o = quote.open?.[i];
+          const h = quote.high?.[i];
+          const l = quote.low?.[i];
+          const c = quote.close?.[i];
+          const v = quote.volume?.[i] || 0;
+
+          if (o !== null && h !== null && l !== null && c !== null && !isNaN(o)) {
+            map.set(t, {
+              time: t,
+              timeString: new Date(t * 1000).toISOString(),
+              open: Number(Number(o).toFixed(2)),
+              high: Number(Number(h).toFixed(2)),
+              low: Number(Number(l).toFixed(2)),
+              close: Number(Number(c).toFixed(2)),
+              volume: Number(v) || 0,
+            });
+          }
+        }
+        candles = Array.from(map.values()).sort((a, b) => a.time - b.time);
+      }
+    } else {
+      // Standard Indian Market Stocks via Upstox API
+      candles = await fetchCandleRange(
+        instrumentKey,
+        timeframe,
+        from,
+        to,
+        includeIntraday
+      );
+    }
 
     candleCache.set(cacheKey, { timestamp: now, candles });
 
