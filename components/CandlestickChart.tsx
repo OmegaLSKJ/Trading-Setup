@@ -206,6 +206,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!candleSeriesRef.current || !chartContainerRef.current) return;
         try {
           const priceScale = candleSeriesRef.current.priceScale();
+          priceScale.applyOptions({ autoScale: false });
           const visibleRange = priceScale.getVisibleRange();
           const height = chartContainerRef.current.clientHeight;
           if (visibleRange && height > 0) {
@@ -542,34 +543,27 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
       });
 
-      // Vertical dragging support (drag up / drag down on canvas with Right-click, Middle-click, or Shift+drag)
+      // Direct drag up / drag down support inside chart canvas on mouse/touch drag
       let isVerticalDragging = false;
       let lastDragY = 0;
+      let didDragVertically = false;
 
-      const handlePointerDown = (e: PointerEvent) => {
-        if (e.button === 2 || e.button === 1 || (e.button === 0 && (e.shiftKey || e.altKey))) {
-          isVerticalDragging = true;
-          lastDragY = e.clientY;
-          try {
-            container.setPointerCapture(e.pointerId);
-          } catch {
-            // ignore
-          }
-          e.preventDefault();
-        }
-      };
-
-      const handlePointerMove = (e: PointerEvent) => {
+      const handleWindowPointerMove = (e: PointerEvent) => {
         if (!isVerticalDragging || !candleSeriesRef.current) return;
         const dy = e.clientY - lastDragY;
         lastDragY = e.clientY;
 
+        if (Math.abs(dy) < 0.2) return;
+        didDragVertically = true;
+
         try {
           const priceScale = candleSeriesRef.current.priceScale();
+          priceScale.applyOptions({ autoScale: false });
           const visibleRange = priceScale.getVisibleRange();
-          if (visibleRange && container.clientHeight > 0) {
+          const height = container.clientHeight;
+          if (visibleRange && height > 0) {
             const span = visibleRange.to - visibleRange.from;
-            const priceDelta = (dy / container.clientHeight) * span;
+            const priceDelta = (dy / height) * span;
             priceScale.setVisibleRange({
               from: visibleRange.from + priceDelta,
               to: visibleRange.to + priceDelta,
@@ -578,31 +572,64 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         } catch {
           // ignore
         }
-        e.preventDefault();
       };
 
-      const handlePointerUp = (e: PointerEvent) => {
+      const handleWindowPointerUp = () => {
         if (isVerticalDragging) {
           isVerticalDragging = false;
+          window.removeEventListener('pointermove', handleWindowPointerMove);
+          window.removeEventListener('pointerup', handleWindowPointerUp);
+          window.removeEventListener('pointercancel', handleWindowPointerUp);
+        }
+      };
+
+      const handlePointerDown = (e: PointerEvent) => {
+        // Accept primary left click (0), middle click (1), or right click (2)
+        if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+
+        const rect = container.getBoundingClientRect();
+        const xInContainer = e.clientX - rect.left;
+        const yInContainer = e.clientY - rect.top;
+
+        // Skip right price scale (~65px) and bottom time scale (~30px) so axis scaling works
+        if (xInContainer > rect.width - 65 || yInContainer > rect.height - 30) {
+          return;
+        }
+
+        isVerticalDragging = true;
+        didDragVertically = false;
+        lastDragY = e.clientY;
+
+        window.addEventListener('pointermove', handleWindowPointerMove);
+        window.addEventListener('pointerup', handleWindowPointerUp);
+        window.addEventListener('pointercancel', handleWindowPointerUp);
+      };
+
+      const handleContextMenu = (e: MouseEvent) => {
+        if (didDragVertically) {
+          e.preventDefault();
+        }
+      };
+
+      const handleDblClick = (e: MouseEvent) => {
+        const rect = container.getBoundingClientRect();
+        const xInContainer = e.clientX - rect.left;
+        const yInContainer = e.clientY - rect.top;
+
+        // Double click inside canvas resets scale to auto-fit
+        if (xInContainer <= rect.width - 65 && yInContainer <= rect.height - 30) {
           try {
-            container.releasePointerCapture(e.pointerId);
+            candleSeriesRef.current?.priceScale().applyOptions({ autoScale: true });
+            chartApiRef.current?.timeScale().resetTimeScale();
           } catch {
             // ignore
           }
         }
       };
 
-      const handleContextMenu = (e: MouseEvent) => {
-        if (isVerticalDragging) {
-          e.preventDefault();
-        }
-      };
-
       container.addEventListener('pointerdown', handlePointerDown);
-      container.addEventListener('pointermove', handlePointerMove);
-      container.addEventListener('pointerup', handlePointerUp);
-      container.addEventListener('pointercancel', handlePointerUp);
       container.addEventListener('contextmenu', handleContextMenu);
+      container.addEventListener('dblclick', handleDblClick);
 
       // Resize observer
       const resizeObserver = new ResizeObserver((entries) => {
@@ -616,10 +643,11 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       return () => {
         container.removeEventListener('pointerdown', handlePointerDown);
-        container.removeEventListener('pointermove', handlePointerMove);
-        container.removeEventListener('pointerup', handlePointerUp);
-        container.removeEventListener('pointercancel', handlePointerUp);
         container.removeEventListener('contextmenu', handleContextMenu);
+        container.removeEventListener('dblclick', handleDblClick);
+        window.removeEventListener('pointermove', handleWindowPointerMove);
+        window.removeEventListener('pointerup', handleWindowPointerUp);
+        window.removeEventListener('pointercancel', handleWindowPointerUp);
         unsubCrosshair();
         resizeObserver.disconnect();
         chart.remove();

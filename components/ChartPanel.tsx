@@ -597,10 +597,10 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              chartRef.current?.panVertical?.(35);
+              chartRef.current?.panVertical?.(-35);
             }}
             className="p-1 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 transition-colors cursor-pointer hidden sm:flex"
-            title="Pan Graph Up / Drag Top (or Shift+Drag on chart / Drag price scale)"
+            title="Pan Graph Up / Drag Top (or drag inside chart canvas)"
           >
             <ChevronUp className="w-3.5 h-3.5" />
           </button>
@@ -609,10 +609,10 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              chartRef.current?.panVertical?.(-35);
+              chartRef.current?.panVertical?.(35);
             }}
             className="p-1 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 transition-colors cursor-pointer hidden sm:flex"
-            title="Pan Graph Down / Drag Down (or Shift+Drag on chart / Drag price scale)"
+            title="Pan Graph Down / Drag Down (or drag inside chart canvas)"
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
