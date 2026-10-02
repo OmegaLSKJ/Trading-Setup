@@ -19,8 +19,8 @@ const DEFAULT_INDICATORS: IndicatorConfig = {
   ema20: false,
   ema50: false,
   ema200: false,
-  rsi14: false,
-  vwap: false,
+  rsi14: true,
+  vwap: true,
   volume: true,
   strategy: true,
 };
@@ -663,6 +663,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
               strategy: true,
               ema8: true,
               ema16: true,
+              rsi14: true,
             },
           }));
           set({
@@ -677,15 +678,20 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     }
   },
 
-  applyStrategyToAllCharts: (enable: boolean = true) => {
+  applyStrategyToAllCharts: (enable?: boolean) => {
     set((state) => {
+      const targetState =
+        enable !== undefined ? enable : !state.charts.some((c) => c.indicators.strategy);
+
       const charts = state.charts.map((c) => ({
         ...c,
         indicators: {
           ...c.indicators,
-          strategy: enable,
-          ema8: enable ? true : c.indicators.ema8,
-          ema16: enable ? true : c.indicators.ema16,
+          strategy: targetState,
+          ema8: targetState ? true : c.indicators.ema8,
+          ema16: targetState ? true : c.indicators.ema16,
+          rsi14: targetState ? true : c.indicators.rsi14,
+          volume: targetState ? true : c.indicators.volume,
         },
       }));
       persistActiveState(charts, state.layoutMode);

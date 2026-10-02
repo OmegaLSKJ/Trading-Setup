@@ -458,28 +458,52 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                 </label>
 
                 <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
-                  Strategy EMAs
+                  Exponential Moving Averages
                 </div>
-                {(['ema8', 'ema16'] as (keyof IndicatorConfig)[]).map((ind) => (
+                {[
+                  { key: 'ema8', label: 'EMA 8 (Fast Strategy)', color: 'text-sky-400' },
+                  { key: 'ema16', label: 'EMA 16 (Slow Strategy)', color: 'text-amber-400' },
+                  { key: 'ema20', label: 'EMA 20 (Momentum)', color: 'text-pink-400' },
+                  { key: 'ema50', label: 'EMA 50 (Intermediate)', color: 'text-purple-400' },
+                  { key: 'ema200', label: 'EMA 200 (Macro Trend)', color: 'text-yellow-400' },
+                ].map((item) => (
                   <label
-                    key={ind}
+                    key={item.key}
                     className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer"
                   >
-                    <span>{ind === 'ema8' ? 'EMA 8 (Fast)' : 'EMA 16 (Slow)'}</span>
+                    <span className={item.color}>{item.label}</span>
                     <input
                       type="checkbox"
-                      checked={panel.indicators[ind]}
-                      onChange={() => toggleChartIndicator(panel.id, ind)}
+                      checked={panel.indicators[item.key as keyof IndicatorConfig]}
+                      onChange={() => toggleChartIndicator(panel.id, item.key as keyof IndicatorConfig)}
                       className="rounded accent-emerald-500 cursor-pointer"
                     />
                   </label>
                 ))}
 
                 <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
-                  Volume Tracking
+                  Oscillators &amp; Volume
                 </div>
                 <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
-                  <span>Volume Histogram</span>
+                  <span className="text-purple-300 font-medium">RSI 14 (70/30 Bands)</span>
+                  <input
+                    type="checkbox"
+                    checked={panel.indicators.rsi14}
+                    onChange={() => toggleChartIndicator(panel.id, 'rsi14')}
+                    className="rounded accent-purple-500 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
+                  <span className="text-cyan-300 font-medium">VWAP (Daily Anchor)</span>
+                  <input
+                    type="checkbox"
+                    checked={panel.indicators.vwap}
+                    onChange={() => toggleChartIndicator(panel.id, 'vwap')}
+                    className="rounded accent-cyan-500 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
+                  <span className="text-slate-300">Volume Histogram</span>
                   <input
                     type="checkbox"
                     checked={panel.indicators.volume}

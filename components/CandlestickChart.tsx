@@ -16,7 +16,15 @@ import {
   Time,
 } from 'lightweight-charts';
 import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
-import { calculateEMA, calculateVWAP } from '@/lib/indicators';
+import {
+  calculateEMA,
+  calculateVWAP,
+  calculateRSI,
+  calculateDPO,
+  calculateADX,
+  computeLiveIndicatorsSnapshot,
+  LiveIndicatorsSnapshot,
+} from '@/lib/indicators';
 import { chartSyncBus } from '@/lib/chart-sync';
 import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
@@ -68,7 +76,14 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const emaSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const rsiPriceLinesRef = useRef<any[]>([]);
     const markersPluginRef = useRef<any>(null);
+
+    // Active indicators snapshot lookup by timestamp for crosshair hover inspection
+    const candleIndicatorsMap = useRef<Map<number, LiveIndicatorsSnapshot>>(new Map());
+    const [liveIndicators, setLiveIndicators] = useState<LiveIndicatorsSnapshot | null>(null);
+    const [hoverIndicators, setHoverIndicators] = useState<LiveIndicatorsSnapshot | null>(null);
 
     // Active mutable candles in memory for real-time live ticking
     const activeCandlesRef = useRef<Candle[]>([]);
@@ -323,6 +338,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       chart.subscribeCrosshairMove((param) => {
         if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
           setHoverData(null);
+          setHoverIndicators(null);
           if (onCrosshairMove) onCrosshairMove(null);
           return;
         }
@@ -358,6 +374,9 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             timeStr,
           };
           setHoverData(currentHover);
+
+          const histSnap = candleIndicatorsMap.current.get(timeNum);
+          setHoverIndicators(histSnap || null);
 
           if (onCrosshairMove) {
             onCrosshairMove({
@@ -467,7 +486,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         volumeSeriesRef.current.setData([]);
       }
 
-      // Zoom to the most recent 75 candles with right padding so candles are crisp and clearly visible
+      // Zoom to the most recent 75 candles with right padding
       if (chartApiRef.current && candleData.length > 0) {
         const total = candleData.length;
         chartApiRef.current.timeScale().setVisibleLogicalRange({
@@ -478,9 +497,50 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       const last = candles[candles.length - 1];
       setCurrentLivePrice(last.close);
-    }, [candles, indicators.volume]);
+      liveStreamManager.setLastKnownPrice(instrumentKey, last.close);
 
-    // Real-Time Live Market Data Stream Subscription (Authentic Upstox SSE Stream ONLY)
+      // Precalculate indicators across all historical bars for crosshair inspection
+      const ema8List = calculateEMA(candles, 8);
+      const ema16List = calculateEMA(candles, 16);
+      const ema20List = calculateEMA(candles, 20);
+      const ema50List = calculateEMA(candles, 50);
+      const ema200List = calculateEMA(candles, 200);
+      const rsiList = calculateRSI(candles, 14);
+      const vwapList = calculateVWAP(candles);
+      const dpoList = calculateDPO(candles, 20);
+      const adxList = calculateADX(candles, 14);
+
+      const ema8Map = new Map(ema8List.map((p) => [p.time, p.value]));
+      const ema16Map = new Map(ema16List.map((p) => [p.time, p.value]));
+      const ema20Map = new Map(ema20List.map((p) => [p.time, p.value]));
+      const ema50Map = new Map(ema50List.map((p) => [p.time, p.value]));
+      const ema200Map = new Map(ema200List.map((p) => [p.time, p.value]));
+      const rsiMap = new Map(rsiList.map((p) => [p.time, p.value]));
+      const vwapMap = new Map(vwapList.map((p) => [p.time, p.value]));
+      const dpoMap = new Map(dpoList.map((p) => [p.time, p.value]));
+      const adxMap = new Map(adxList.map((p) => [p.time, p.value]));
+
+      candleIndicatorsMap.current.clear();
+      candles.forEach((c) => {
+        candleIndicatorsMap.current.set(c.time, {
+          ema8: ema8Map.get(c.time) ?? c.close,
+          ema16: ema16Map.get(c.time) ?? c.close,
+          ema20: ema20Map.get(c.time),
+          ema50: ema50Map.get(c.time),
+          ema200: ema200Map.get(c.time),
+          rsi14: rsiMap.get(c.time) ?? 50,
+          vwap: vwapMap.get(c.time),
+          dpo: dpoMap.get(c.time) ?? 0,
+          adx: adxMap.get(c.time) ?? 0,
+          volume: c.volume,
+        });
+      });
+
+      const initialSnap = computeLiveIndicatorsSnapshot(candles);
+      setLiveIndicators(initialSnap);
+    }, [candles, indicators.volume, instrumentKey]);
+
+    // Real-Time Live Market Data Stream Subscription
     useEffect(() => {
       if (!instrumentKey) return;
 
@@ -501,6 +561,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           last.volume = (last.volume || 0) + tick.volumeDelta;
         }
 
+        // 1. Update Candlestick Bar on Canvas
         candleSeriesRef.current.update({
           time: last.time as unknown as Time,
           open: last.open,
@@ -509,6 +570,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           close: last.close,
         });
 
+        // 2. Update Volume Histogram on Canvas
         if (volumeSeriesRef.current && indicators.volume) {
           volumeSeriesRef.current.update({
             time: last.time as unknown as Time,
@@ -520,6 +582,57 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           });
         }
 
+        // 3. Live Dynamic EMAs Update on Canvas
+        const emaConfigs = [
+          { key: 'ema8', period: 8 },
+          { key: 'ema16', period: 16 },
+          { key: 'ema20', period: 20 },
+          { key: 'ema50', period: 50 },
+          { key: 'ema200', period: 200 },
+        ];
+        emaConfigs.forEach(({ key, period }) => {
+          const series = emaSeriesRefs.current.get(key);
+          if (series && indicators[key as keyof IndicatorConfig]) {
+            const emaPoints = calculateEMA(list, period);
+            if (emaPoints.length > 0) {
+              const curEma = emaPoints[emaPoints.length - 1].value;
+              series.update({
+                time: last.time as unknown as Time,
+                value: curEma,
+              });
+            }
+          }
+        });
+
+        // 4. Live Dynamic RSI Update on Canvas
+        if (rsiSeriesRef.current && indicators.rsi14) {
+          const rsiPoints = calculateRSI(list, 14);
+          if (rsiPoints.length > 0) {
+            const curRsi = rsiPoints[rsiPoints.length - 1].value;
+            rsiSeriesRef.current.update({
+              time: last.time as unknown as Time,
+              value: curRsi,
+            });
+          }
+        }
+
+        // 5. Live Dynamic VWAP Update on Canvas
+        if (vwapSeriesRef.current && indicators.vwap) {
+          const vwapPoints = calculateVWAP(list);
+          if (vwapPoints.length > 0) {
+            const curVwap = vwapPoints[vwapPoints.length - 1].value;
+            vwapSeriesRef.current.update({
+              time: last.time as unknown as Time,
+              value: curVwap,
+            });
+          }
+        }
+
+        // 6. Update Live Indicators HUD state for instant 60fps display
+        const currentSnapshot = computeLiveIndicatorsSnapshot(list);
+        setLiveIndicators(currentSnapshot);
+        candleIndicatorsMap.current.set(last.time, currentSnapshot);
+
         setCurrentLivePrice(newPrice);
         setTickDirection(direction);
 
@@ -530,20 +643,44 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           onLivePriceUpdate(newPrice, change, changePercent, direction);
         }
 
-        // Live Strategy Evaluation on SSE live tick
+        // 7. Live Strategy Evaluation on SSE live tick
         triggerLiveStrategyEvaluation();
       });
 
       return () => {
         unsubscribe();
       };
-    }, [instrumentKey, indicators.volume, onLivePriceUpdate, triggerLiveStrategyEvaluation]);
+    }, [
+      instrumentKey,
+      indicators,
+      onLivePriceUpdate,
+      triggerLiveStrategyEvaluation,
+    ]);
 
-    // Update Indicators (EMA & VWAP)
+    // Update Indicators (EMAs, RSI, and VWAP Series on Chart Canvas)
     useEffect(() => {
       const chart = chartApiRef.current;
       if (!chart || !candles || candles.length === 0) return;
 
+      // Adjust main candle and volume scale margins if RSI pane is active
+      if (candleSeriesRef.current) {
+        candleSeriesRef.current.priceScale().applyOptions({
+          scaleMargins: {
+            top: 0.06,
+            bottom: indicators.rsi14 ? 0.30 : 0.16,
+          },
+        });
+      }
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.priceScale().applyOptions({
+          scaleMargins: {
+            top: 0.65,
+            bottom: indicators.rsi14 ? 0.28 : 0.01,
+          },
+        });
+      }
+
+      // 1. Exponential Moving Averages (8, 16, 20, 50, 200)
       const emaConfigs = [
         { key: 'ema8', period: 8, color: '#38bdf8', active: indicators.ema8 },
         { key: 'ema16', period: 16, color: '#f59e0b', active: indicators.ema16 },
@@ -575,7 +712,75 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
       });
 
-      // VWAP
+      // 2. Relative Strength Index (RSI 14) Oscillator
+      if (indicators.rsi14) {
+        if (!rsiSeriesRef.current) {
+          const rsiSeries = chart.addSeries(LineSeries, {
+            color: '#c084fc',
+            lineWidth: 2,
+            priceScaleId: 'rsi_scale',
+            title: 'RSI 14',
+            priceFormat: {
+              type: 'custom',
+              formatter: (val: number) => val.toFixed(1),
+            },
+            lastValueVisible: true,
+            priceLineVisible: false,
+          });
+
+          chart.priceScale('rsi_scale').applyOptions({
+            scaleMargins: {
+              top: 0.76,
+              bottom: 0.02,
+            },
+            autoScale: true,
+            visible: true,
+            borderColor: '#334155',
+          });
+
+          const p70 = rsiSeries.createPriceLine({
+            price: 70,
+            color: 'rgba(239, 68, 68, 0.75)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: '70 OB',
+          });
+
+          const p30 = rsiSeries.createPriceLine({
+            price: 30,
+            color: 'rgba(16, 185, 129, 0.75)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: '30 OS',
+          });
+
+          const p50 = rsiSeries.createPriceLine({
+            price: 50,
+            color: 'rgba(148, 163, 184, 0.35)',
+            lineWidth: 1,
+            lineStyle: LineStyle.SparseDotted,
+            axisLabelVisible: false,
+            title: '50',
+          });
+
+          rsiPriceLinesRef.current = [p70, p30, p50];
+          rsiSeriesRef.current = rsiSeries;
+        }
+
+        const rsiData = calculateRSI(candles, 14).map((p) => ({
+          time: p.time as unknown as Time,
+          value: p.value,
+        }));
+        rsiSeriesRef.current.setData(rsiData);
+      } else if (rsiSeriesRef.current) {
+        chart.removeSeries(rsiSeriesRef.current);
+        rsiSeriesRef.current = null;
+        rsiPriceLinesRef.current = [];
+      }
+
+      // 3. Volume Weighted Average Price (VWAP)
       if (indicators.vwap) {
         if (!vwapSeriesRef.current) {
           vwapSeriesRef.current = chart.addSeries(LineSeries, {
@@ -621,6 +826,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           hour12: true,
         }) + ' IST',
     } : null);
+
+    const displayIndicators = hoverIndicators || liveIndicators;
 
     return (
       <div className="relative w-full h-full flex flex-col bg-[#080c14] select-none overflow-hidden">
@@ -692,6 +899,120 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             <span className="text-slate-500">Connecting Upstox feed...</span>
           )}
         </div>
+
+        {/* Dynamic Live Indicators HUD Ribbon */}
+        {displayIndicators && (
+          <div className="absolute top-9 sm:top-10 left-2 z-10 flex flex-wrap items-center gap-1.5 bg-[#0a0f1d]/90 backdrop-blur-md px-2 py-0.5 rounded border border-slate-800/90 text-[10.5px] font-mono pointer-events-none text-slate-300 shadow-lg">
+            <span className="text-slate-400 font-sans font-bold text-[9px] uppercase tracking-wider mr-0.5">
+              Indicators:
+            </span>
+
+            {/* EMA 8 */}
+            {indicators.ema8 && displayIndicators.ema8 !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-sky-950/60 border border-sky-800/50 text-sky-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block"></span>
+                <span className="font-sans text-sky-400 font-semibold text-[10px]">EMA 8:</span>
+                <span className="font-bold text-white">{displayIndicators.ema8.toFixed(2)}</span>
+              </span>
+            )}
+
+            {/* EMA 16 */}
+            {indicators.ema16 && displayIndicators.ema16 !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-amber-950/60 border border-amber-800/50 text-amber-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                <span className="font-sans text-amber-400 font-semibold text-[10px]">EMA 16:</span>
+                <span className="font-bold text-white">{displayIndicators.ema16.toFixed(2)}</span>
+              </span>
+            )}
+
+            {/* Optional EMAs if enabled */}
+            {indicators.ema20 && displayIndicators.ema20 !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-pink-400 inline-block"></span>
+                <span className="font-sans text-pink-400 font-semibold text-[10px]">EMA 20:</span>
+                <span className="font-bold text-white">{displayIndicators.ema20.toFixed(2)}</span>
+              </span>
+            )}
+            {indicators.ema50 && displayIndicators.ema50 !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/50 text-purple-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
+                <span className="font-sans text-purple-400 font-semibold text-[10px]">EMA 50:</span>
+                <span className="font-bold text-white">{displayIndicators.ema50.toFixed(2)}</span>
+              </span>
+            )}
+            {indicators.ema200 && displayIndicators.ema200 !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-yellow-950/60 border border-yellow-800/50 text-yellow-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block"></span>
+                <span className="font-sans text-yellow-400 font-semibold text-[10px]">EMA 200:</span>
+                <span className="font-bold text-white">{displayIndicators.ema200.toFixed(2)}</span>
+              </span>
+            )}
+
+            {/* RSI 14 */}
+            {indicators.rsi14 && displayIndicators.rsi14 !== undefined && (
+              <span
+                className={`flex items-center gap-1 px-1.5 py-0.2 rounded border ${
+                  displayIndicators.rsi14 >= 70 && displayIndicators.rsi14 <= 80
+                    ? 'bg-emerald-950/90 border-emerald-500/70 text-emerald-300 shadow-xs'
+                    : displayIndicators.rsi14 > 80
+                    ? 'bg-rose-950/80 border-rose-500/60 text-rose-300'
+                    : displayIndicators.rsi14 < 30
+                    ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300'
+                    : 'bg-purple-950/60 border-purple-800/40 text-purple-300'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
+                <span className="font-sans text-purple-400 font-semibold text-[10px]">RSI 14:</span>
+                <span className="font-bold text-white">{displayIndicators.rsi14.toFixed(1)}</span>
+                {displayIndicators.rsi14 >= 70 && displayIndicators.rsi14 <= 80 && (
+                  <span className="text-[8px] px-1 py-0 rounded font-sans font-bold bg-emerald-900 text-emerald-300 uppercase">
+                    C2 70-80
+                  </span>
+                )}
+              </span>
+            )}
+
+            {/* VWAP */}
+            {indicators.vwap && displayIndicators.vwap !== undefined && (
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950/60 border border-cyan-800/50 text-cyan-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block"></span>
+                <span className="font-sans text-cyan-400 font-semibold text-[10px]">VWAP:</span>
+                <span className="font-bold text-white">{displayIndicators.vwap.toFixed(2)}</span>
+              </span>
+            )}
+
+            {/* Strategy Components: DPO & ADX */}
+            {displayIndicators.dpo !== undefined && (
+              <span className="hidden lg:flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
+                <span className="font-sans text-slate-400 text-[10px]">DPO 20:</span>
+                <span
+                  className={`font-bold ${
+                    displayIndicators.dpo > 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {displayIndicators.dpo > 0 ? '+' : ''}
+                  {displayIndicators.dpo.toFixed(2)}
+                </span>
+              </span>
+            )}
+
+            {displayIndicators.adx !== undefined && displayIndicators.adx > 0 && (
+              <span className="hidden lg:flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-900 border border-slate-700/60 text-slate-300">
+                <span className="font-sans text-slate-400 text-[10px]">ADX 14:</span>
+                <span
+                  className={`font-bold ${
+                    displayIndicators.adx > 22 ? 'text-amber-400' : 'text-slate-300'
+                  }`}
+                >
+                  {displayIndicators.adx.toFixed(1)}
+                  {displayIndicators.adx > 22 && (
+                    <span className="text-[8px] ml-0.5 text-emerald-400 font-bold">&gt;22</span>
+                  )}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Loading overlay */}
         {isLoading && (

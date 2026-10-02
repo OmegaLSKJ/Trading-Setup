@@ -31,6 +31,7 @@ const GLOBAL_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '1h', '1D'];
 
 export const TopBar: React.FC = () => {
   const {
+    charts,
     layoutMode,
     setLayoutMode,
     setGlobalTimeframe,
@@ -46,6 +47,8 @@ export const TopBar: React.FC = () => {
     setTradesModalOpen,
     symbolTrades,
   } = useDashboardStore();
+
+  const isStrategyActive = charts.some((c) => c.indicators.strategy);
 
   const totalRecordedTrades = Object.values(symbolTrades).reduce(
     (acc, t) => acc + t.length,
@@ -150,33 +153,54 @@ export const TopBar: React.FC = () => {
           ))}
         </div>
 
-        {/* Global Strategy Application for All Stocks */}
+        {/* One and Only Strategy Button to Activate / Toggle */}
         <button
           onClick={() => {
-            applyStrategyToAllCharts(true);
+            const willEnable = !isStrategyActive;
+            applyStrategyToAllCharts(willEnable);
             triggerGlobalRefresh();
           }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs text-amber-300 font-medium transition-colors cursor-pointer"
-          title="Custom 3-Candle Strategy is active on all stocks. Click to re-apply/enforce on all charts"
+          className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-medium transition-all shadow-xs cursor-pointer ${
+            isStrategyActive
+              ? 'bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/50 text-amber-300 shadow-amber-950/30'
+              : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+          }`}
+          title={
+            isStrategyActive
+              ? 'Custom 3-Candle Strategy is ACTIVE on all charts. Click to deactivate.'
+              : 'Click to activate Custom 3-Candle Strategy across all charts'
+          }
         >
-          <Target className="w-3.5 h-3.5 text-amber-400" />
-          <span className="hidden sm:inline">Strategy:</span>
-          <span className="font-semibold text-emerald-400">All Stocks</span>
-        </button>
-
-        {/* View All Past Trades Button */}
-        <button
-          onClick={() => setTradesModalOpen(true, null)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-xs text-purple-300 font-medium transition-colors cursor-pointer"
-          title="Inspect all past trades and execution ledger across all stocks"
-        >
-          <History className="w-3.5 h-3.5 text-purple-400" />
-          <span className="hidden sm:inline">Past Trades</span>
-          {totalRecordedTrades > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono font-bold">
-              {totalRecordedTrades}
-            </span>
-          )}
+          <div className="relative flex h-2 w-2">
+            {isStrategyActive && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                isStrategyActive ? 'bg-emerald-500' : 'bg-slate-500'
+              }`}
+            ></span>
+          </div>
+          <Target
+            className={`w-3.5 h-3.5 ${
+              isStrategyActive ? 'text-amber-400' : 'text-slate-400'
+            }`}
+          />
+          <span className="font-semibold hidden sm:inline">
+            {isStrategyActive ? '3-Candle Strategy' : 'Activate Strategy'}
+          </span>
+          <span className="font-semibold sm:hidden">
+            {isStrategyActive ? 'Strategy' : 'Activate'}
+          </span>
+          <span
+            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold uppercase tracking-wider ${
+              isStrategyActive
+                ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/40'
+                : 'bg-slate-800 text-slate-400 border border-slate-700'
+            }`}
+          >
+            {isStrategyActive ? 'ACTIVE' : 'OFF'}
+          </span>
         </button>
 
         {/* Refresh All Charts */}
