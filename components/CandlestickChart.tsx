@@ -543,6 +543,20 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     useEffect(() => {
       if (!instrumentKey) return;
 
+      const getTimeframeSeconds = (tf: string): number => {
+        switch (tf) {
+          case '1m': return 60;
+          case '3m': return 180;
+          case '5m': return 300;
+          case '10m': return 600;
+          case '15m': return 900;
+          case '30m': return 1800;
+          case '1h': return 3600;
+          case '1D': return 86400;
+          default: return 300;
+        }
+      };
+
       const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
         const list = activeCandlesRef.current;
         if (!list || list.length === 0 || !candleSeriesRef.current) return;
@@ -551,35 +565,91 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!last) return;
 
         const newPrice = Number(tick.price.toFixed(2));
-        const direction = newPrice > last.close ? 'UP' : newPrice < last.close ? 'DOWN' : 'EQUAL';
+        const direction = tick.direction || (newPrice > last.close ? 'UP' : newPrice < last.close ? 'DOWN' : 'EQUAL');
 
-        last.close = newPrice;
-        if (newPrice > last.high) last.high = newPrice;
-        if (newPrice < last.low) last.low = newPrice;
-        if (tick.volumeDelta) {
-          last.volume = (last.volume || 0) + tick.volumeDelta;
+        // Check if this tick belongs to the current bar or starts a new candle
+        const intervalSec = getTimeframeSeconds(timeframe);
+        const barStartTime = Math.floor(tick.timestamp / intervalSec) * intervalSec;
+
+        let isNewBar = false;
+
+        if (barStartTime > last.time) {
+          // New candle period started! Append new candle
+          isNewBar = true;
+          const newCandle: Candle = {
+            time: barStartTime,
+            timeString: new Date(barStartTime * 1000).toISOString(),
+            open: newPrice,
+            high: newPrice,
+            low: newPrice,
+            close: newPrice,
+            volume: tick.volumeDelta || 10,
+          };
+          list.push(newCandle);
+
+          try {
+            candleSeriesRef.current.update({
+              time: barStartTime as unknown as Time,
+              open: newCandle.open,
+              high: newCandle.high,
+              low: newCandle.low,
+              close: newCandle.close,
+            });
+
+            if (volumeSeriesRef.current && indicators.volume) {
+              volumeSeriesRef.current.update({
+                time: barStartTime as unknown as Time,
+                value: newCandle.volume,
+                color: 'rgba(16, 185, 129, 0.4)',
+              });
+            }
+          } catch (e) {
+            console.warn('Error pushing new candle bar:', e);
+          }
+
+          // Auto-scroll to real-time if user is looking at latest bars
+          if (chartApiRef.current) {
+            const range = chartApiRef.current.timeScale().getVisibleLogicalRange();
+            if (range && range.to >= list.length - 4) {
+              chartApiRef.current.timeScale().scrollToRealTime();
+            }
+          }
+        } else {
+          // Update in-progress candle
+          last.close = newPrice;
+          if (newPrice > last.high) last.high = newPrice;
+          if (newPrice < last.low) last.low = newPrice;
+          if (tick.volumeDelta) {
+            last.volume = (last.volume || 0) + tick.volumeDelta;
+          }
+
+          try {
+            // 1. Update Candlestick Bar on Canvas
+            candleSeriesRef.current.update({
+              time: last.time as unknown as Time,
+              open: last.open,
+              high: last.high,
+              low: last.low,
+              close: last.close,
+            });
+
+            // 2. Update Volume Histogram on Canvas
+            if (volumeSeriesRef.current && indicators.volume) {
+              volumeSeriesRef.current.update({
+                time: last.time as unknown as Time,
+                value: last.volume,
+                color:
+                  last.close >= last.open
+                    ? 'rgba(16, 185, 129, 0.4)'
+                    : 'rgba(239, 68, 68, 0.4)',
+              });
+            }
+          } catch (e) {
+            console.warn('Error updating live candle bar:', e);
+          }
         }
 
-        // 1. Update Candlestick Bar on Canvas
-        candleSeriesRef.current.update({
-          time: last.time as unknown as Time,
-          open: last.open,
-          high: last.high,
-          low: last.low,
-          close: last.close,
-        });
-
-        // 2. Update Volume Histogram on Canvas
-        if (volumeSeriesRef.current && indicators.volume) {
-          volumeSeriesRef.current.update({
-            time: last.time as unknown as Time,
-            value: last.volume,
-            color:
-              last.close >= last.open
-                ? 'rgba(16, 185, 129, 0.4)'
-                : 'rgba(239, 68, 68, 0.4)',
-          });
-        }
+        const activeBar = list[list.length - 1];
 
         // 3. Live Dynamic EMAs Update on Canvas
         const emaConfigs = [
@@ -595,10 +665,14 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             const emaPoints = calculateEMA(list, period);
             if (emaPoints.length > 0) {
               const curEma = emaPoints[emaPoints.length - 1].value;
-              series.update({
-                time: last.time as unknown as Time,
-                value: curEma,
-              });
+              try {
+                series.update({
+                  time: activeBar.time as unknown as Time,
+                  value: curEma,
+                });
+              } catch {
+                // ignore
+              }
             }
           }
         });
@@ -608,10 +682,14 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const rsiPoints = calculateRSI(list, 14);
           if (rsiPoints.length > 0) {
             const curRsi = rsiPoints[rsiPoints.length - 1].value;
-            rsiSeriesRef.current.update({
-              time: last.time as unknown as Time,
-              value: curRsi,
-            });
+            try {
+              rsiSeriesRef.current.update({
+                time: activeBar.time as unknown as Time,
+                value: curRsi,
+              });
+            } catch {
+              // ignore
+            }
           }
         }
 
@@ -620,17 +698,21 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const vwapPoints = calculateVWAP(list);
           if (vwapPoints.length > 0) {
             const curVwap = vwapPoints[vwapPoints.length - 1].value;
-            vwapSeriesRef.current.update({
-              time: last.time as unknown as Time,
-              value: curVwap,
-            });
+            try {
+              vwapSeriesRef.current.update({
+                time: activeBar.time as unknown as Time,
+                value: curVwap,
+              });
+            } catch {
+              // ignore
+            }
           }
         }
 
         // 6. Update Live Indicators HUD state for instant 60fps display
         const currentSnapshot = computeLiveIndicatorsSnapshot(list);
         setLiveIndicators(currentSnapshot);
-        candleIndicatorsMap.current.set(last.time, currentSnapshot);
+        candleIndicatorsMap.current.set(activeBar.time, currentSnapshot);
 
         setCurrentLivePrice(newPrice);
         setTickDirection(direction);
@@ -652,6 +734,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     }, [
       instrumentKey,
       indicators,
+      timeframe,
       onLivePriceUpdate,
       triggerLiveStrategyEvaluation,
     ]);
@@ -834,17 +917,20 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/95 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-xl">
           {/* Market Status beacon */}
           {(!instrumentKey.startsWith('US|') && !getIndianMarketStatus().isOpen) ? (
-            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-rose-400 mr-1 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/40">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-              CLOSED
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1">
+            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              LIVE
+              UPSTOX LIVE
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              LIVE MARKET
             </span>
           )}
 

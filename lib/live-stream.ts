@@ -41,6 +41,7 @@ class LiveStreamManager {
   }
 
   public dispatchTick(tick: LiveTick) {
+    if (!tick || !tick.instrumentKey) return;
     const set = this.listeners.get(tick.instrumentKey);
     if (set) {
       set.forEach((listener) => {
@@ -50,6 +51,20 @@ class LiveStreamManager {
           console.error('Error dispatching tick:', e);
         }
       });
+      return;
+    }
+
+    // Case-insensitive fallback matching
+    for (const [key, listenerSet] of this.listeners.entries()) {
+      if (key.toLowerCase() === tick.instrumentKey.toLowerCase()) {
+        listenerSet.forEach((listener) => {
+          try {
+            listener(tick);
+          } catch (e) {
+            console.error('Error dispatching tick:', e);
+          }
+        });
+      }
     }
   }
 
