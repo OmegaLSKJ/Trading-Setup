@@ -21,8 +21,10 @@ export const SymbolSearchModal: React.FC = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const latestSearchIdRef = useRef(0);
 
   const fetchResults = useCallback(async (q: string) => {
+    const searchId = ++latestSearchIdRef.current;
     setIsLoading(true);
     try {
       const res = await fetch(`/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`);
@@ -42,12 +44,14 @@ export const SymbolSearchModal: React.FC = () => {
           });
         }
       }
-      setResults(list);
-      setSelectedIndex(0);
+      if (searchId === latestSearchIdRef.current) {
+        setResults(list);
+        setSelectedIndex(0);
+      }
     } catch (error) {
-      console.error('Failed to search instruments:', error);
+      if (searchId === latestSearchIdRef.current) console.error('Failed to search instruments:', error);
     } finally {
-      setIsLoading(false);
+      if (searchId === latestSearchIdRef.current) setIsLoading(false);
     }
   }, []);
 
@@ -61,7 +65,8 @@ export const SymbolSearchModal: React.FC = () => {
       }, 0);
       return () => clearTimeout(resetTimer);
     }
-  }, [isSymbolSearchOpen, fetchResults]);
+    latestSearchIdRef.current++;
+  }, [isSymbolSearchOpen]);
 
   // Debounced search
   useEffect(() => {

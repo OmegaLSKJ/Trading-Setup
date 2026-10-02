@@ -85,7 +85,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
     ) {
       const timeToScroll = targetTradeNavigation.time;
       const tradeId = targetTradeNavigation.id;
-      setTimeout(() => {
+      const toastTimer = setTimeout(() => {
         setNavigatedTradeToast(`Navigated to ${tradeId} (${panel.instrument.trading_symbol})`);
         if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);
         navigatedToastTimerRef.current = setTimeout(() => setNavigatedTradeToast(null), 3800);
@@ -93,13 +93,18 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
       // Scroll after chart canvas has rendered and retry to ensure candle alignment
       const delays = [80, 250, 600];
-      delays.forEach((delay) => setTimeout(() => {
+      const scrollTimers = delays.map((delay) => setTimeout(() => {
           chartRef.current?.scrollToTime(timeToScroll);
         }, delay));
 
-      clearTradeNavigation();
+      const clearNavigationTimer = setTimeout(clearTradeNavigation, 650);
+      return () => {
+        clearTimeout(toastTimer);
+        clearTimeout(clearNavigationTimer);
+        scrollTimers.forEach(clearTimeout);
+      };
     }
-  }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation, candles]);
+  }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation]);
 
   useEffect(() => () => {
     if (navigatedToastTimerRef.current) clearTimeout(navigatedToastTimerRef.current);

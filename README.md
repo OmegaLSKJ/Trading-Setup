@@ -28,7 +28,7 @@ Designed strictly for market data visualization, multi-timeframe technical analy
   - Restores your exact workspace configuration on restart
 - **Connection Status HUD**: Live connection indicator displaying server ping latency, status, and indexed instrument counts.
 
-Live chart updates use observed Upstox quotes during Indian market hours and Yahoo Finance quote updates for US instruments. The dashboard does not invent after-hours prices or trade volume; when a provider has no new quote, the latest chart data remains unchanged. US 3-minute and 10-minute candles are aggregated from provider 1-minute and 5-minute bars respectively, subject to provider history limits.
+Live chart updates use Upstox quotes during Indian market hours and Yahoo Finance quotes for US instruments. During open sessions, the chart animates at 200 ms using simulated price steps bounded by the latest observed quote; estimated volume is also simulated. The chart labels this as `SIM`. Outside market hours, it stays static. US 3-minute and 10-minute candles are aggregated from provider 1-minute and 5-minute bars respectively, subject to provider history limits.
 
 ---
 
