@@ -497,7 +497,6 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       const last = candles[candles.length - 1];
       setCurrentLivePrice(last.close);
-      liveStreamManager.setLastKnownPrice(instrumentKey, last.close);
 
       // Precalculate indicators across all historical bars for crosshair inspection
       const ema8List = calculateEMA(candles, 8);
