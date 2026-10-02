@@ -408,8 +408,6 @@ class InstrumentMasterService {
     const containsSymbolMatches: Instrument[] = [];
     const nameMatches: Instrument[] = [];
 
-    const isMatch = (str: string, target: string) => str.toUpperCase().includes(target);
-
     for (const inst of this.instruments) {
       const sym = inst.trading_symbol.toUpperCase();
       const name = (inst.name || '').toUpperCase();

@@ -6,16 +6,9 @@ import { PastTrade } from '@/lib/strategy';
 import {
   X,
   History,
-  TrendingUp,
   Download,
-  Filter,
   Search,
-  CheckCircle2,
-  Clock,
   ArrowUpRight,
-  ShieldAlert,
-  Sparkles,
-  BarChart3,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -53,11 +46,14 @@ export const TradesHistoryModal: React.FC = () => {
 
   // Keep selectedSymbol synced with store when modal opens
   React.useEffect(() => {
+    const timer = setTimeout(() => {
     if (tradesModalSymbol) {
       setSelectedSymbol(tradesModalSymbol);
     } else {
       setSelectedSymbol('ALL');
     }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [tradesModalSymbol, isTradesModalOpen]);
 
   // Aggregate all trades from the store

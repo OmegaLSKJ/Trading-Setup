@@ -1,229 +1,173 @@
 import { NextRequest } from 'next/server';
 import { getUpstoxToken } from '@/lib/upstox-service';
 import { getIndianMarketStatus, getUSMarketStatus } from '@/lib/market-hours';
+import { allowApiRequest } from '@/lib/api-rate-limit';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const instrumentsParam = searchParams.get('instruments') || '';
-  const instrumentKeys = instrumentsParam
-    .split(',')
-    .map((k) => k.trim())
-    .filter(Boolean);
+function isAllowedInstrument(key: string): boolean {
+  return /^US\|[A-Z0-9.^_-]{1,20}$/.test(key) || /^(NSE|BSE|NFO|MCX)_[A-Z0-9]+\|[A-Za-z0-9 .&_-]{1,80}$/.test(key);
+}
 
-  if (instrumentKeys.length === 0) {
-    return new Response('No instrument keys provided', { status: 400 });
+export async function GET(request: NextRequest) {
+  if (!allowApiRequest(request, 'live-stream', 60)) {
+    return new Response('Too many stream connections; try again shortly', { status: 429 });
+  }
+
+  const instrumentKeys = [...new Set((new URL(request.url).searchParams.get('instruments') || '')
+    .split(',').map((key) => key.trim()).filter(Boolean))];
+  if (instrumentKeys.length === 0 || instrumentKeys.length > 8 || instrumentKeys.some((key) => !isAllowedInstrument(key))) {
+    return new Response('Provide between one and eight valid instrument keys', { status: 400 });
   }
 
   const token = getUpstoxToken();
-
+  let cleanup = () => {};
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       const encoder = new TextEncoder();
       let isClosed = false;
-
-      // Track authentic base prices and current active live tick prices
+      let upstoxBusy = false;
+      let yahooBusy = false;
       const authenticLtpMap = new Map<string, number>();
       const currentTickPriceMap = new Map<string, number>();
       const lastTickDirectionMap = new Map<string, 'UP' | 'DOWN' | 'EQUAL'>();
-
-      // Send initial market status event
-      const initialStatus = getIndianMarketStatus();
-      const statusPayload = JSON.stringify({
-        type: 'MARKET_STATUS',
-        isOpen: initialStatus.isOpen,
-        session: initialStatus.session,
-        exchange: initialStatus.exchange,
-        reason: initialStatus.reason,
-        timeIST: initialStatus.timeIST,
-      });
-      try {
-        controller.enqueue(encoder.encode(`data: ${statusPayload}\n\n`));
-      } catch {
-        // stream closed
-      }
-
-      // 1. Function to poll authentic Upstox LTPs periodically
-      const pollUpstoxBasePrices = async () => {
-        if (isClosed || !token) return;
-
-        const indianKeys = instrumentKeys.filter((k) => !k.startsWith('US|'));
-        if (indianKeys.length === 0) return;
-
+      const send = (payload: unknown) => {
+        if (isClosed) return;
         try {
-          const encoded = encodeURIComponent(indianKeys.slice(0, 50).join(','));
-          const res = await fetch(`https://api.upstox.com/v3/market-quote/ltp?instrument_key=${encoded}`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/json',
-            },
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch {
+          closeStream();
+        }
+      };
+
+      const initialStatus = getIndianMarketStatus();
+      send({
+        type: 'MARKET_STATUS', isOpen: initialStatus.isOpen, session: initialStatus.session,
+        exchange: initialStatus.exchange, reason: initialStatus.reason, timeIST: initialStatus.timeIST,
+      });
+
+      const pollUpstoxBasePrices = async () => {
+        const keys = instrumentKeys.filter((key) => !key.startsWith('US|'));
+        if (isClosed || upstoxBusy || !token || keys.length === 0) return;
+        upstoxBusy = true;
+        try {
+          const encoded = encodeURIComponent(keys.join(','));
+          const response = await fetch(`https://api.upstox.com/v3/market-quote/ltp?instrument_key=${encoded}`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+            signal: request.signal,
           });
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'success' && data.data) {
-              for (const [key, quote] of Object.entries<any>(data.data)) {
-                if (quote?.last_price !== undefined && quote?.last_price !== null) {
-                  const instKey = quote.instrument_token || key;
-                  const price = Number(quote.last_price.toFixed(2));
-                  authenticLtpMap.set(instKey, price);
-                  if (!currentTickPriceMap.has(instKey)) {
-                    currentTickPriceMap.set(instKey, price);
-                  }
-                }
-              }
-            }
+          if (!response.ok) return;
+          const body: unknown = await response.json();
+          if (!body || typeof body !== 'object' || !('data' in body) || !body.data || typeof body.data !== 'object') return;
+          for (const [responseKey, rawQuote] of Object.entries(body.data)) {
+            if (!rawQuote || typeof rawQuote !== 'object') continue;
+            const quote = rawQuote as { last_price?: unknown; instrument_token?: unknown };
+            const price = Number(quote.last_price);
+            const quoteKey = typeof quote.instrument_token === 'string' ? quote.instrument_token : responseKey;
+            const instrumentKey = keys.find((key) => key === quoteKey || key.replace('|', ':') === responseKey);
+            if (!instrumentKey || !Number.isFinite(price) || price <= 0) continue;
+            authenticLtpMap.set(instrumentKey, price);
+            if (!currentTickPriceMap.has(instrumentKey)) currentTickPriceMap.set(instrumentKey, price);
           }
-        } catch (e) {
-          console.warn('Upstox base quote fetch error:', e);
+        } catch (error) {
+          if (!isClosed) console.warn('Upstox base quote fetch error:', error);
+        } finally {
+          upstoxBusy = false;
         }
       };
 
-      // 2. Function to poll US stocks (Yahoo Finance API)
       const pollUSLiveQuotes = async () => {
-        if (isClosed) return;
-        const usKeys = instrumentKeys.filter((k) => k.startsWith('US|'));
-        if (usKeys.length === 0) return;
-
-        for (const usKey of usKeys) {
-          const ticker = usKey.replace('US|', '').toUpperCase();
-          try {
-            const res = await fetch(
-              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d`,
-              {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-              }
-            );
-
-            if (res.ok) {
-              const data = await res.json();
-              const meta = data.chart?.result?.[0]?.meta;
-              if (meta?.regularMarketPrice) {
-                const price = Number(meta.regularMarketPrice.toFixed(2));
-                authenticLtpMap.set(usKey, price);
-                if (!currentTickPriceMap.has(usKey)) {
-                  currentTickPriceMap.set(usKey, price);
-                }
-              }
-            }
-          } catch {
-            // US quote fetch failed, continue
+        const usKeys = instrumentKeys.filter((key) => key.startsWith('US|'));
+        if (isClosed || yahooBusy || usKeys.length === 0) return;
+        yahooBusy = true;
+        try {
+          for (const usKey of usKeys) {
+            if (isClosed) break;
+            const ticker = usKey.slice(3);
+            const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d`, {
+              headers: { 'User-Agent': 'Mozilla/5.0' },
+              signal: request.signal,
+            });
+            if (!response.ok) continue;
+            const data = await response.json();
+            const marketPrice = Number(data.chart?.result?.[0]?.meta?.regularMarketPrice);
+            if (!Number.isFinite(marketPrice) || marketPrice <= 0) continue;
+            authenticLtpMap.set(usKey, marketPrice);
+            if (!currentTickPriceMap.has(usKey)) currentTickPriceMap.set(usKey, marketPrice);
           }
+        } catch (error) {
+          if (!isClosed) console.warn('Yahoo quote fetch failed:', error);
+        } finally {
+          yahooBusy = false;
         }
       };
 
-      // 3. Ultra-Fast High-Frequency (5 ticks/second at 200ms) for instruments in the ACTIVE stage ONLY
-      const dispatchActiveTicks = async () => {
+      // Keep the existing active-market 200 ms chart motion bounded by observed quotes.
+      const dispatchActiveTicks = () => {
         if (isClosed) return;
-
         const nowSec = Math.floor(Date.now() / 1000);
+        for (const instrumentKey of instrumentKeys) {
+          const isUS = instrumentKey.startsWith('US|');
+          const marketIsOpen = isUS ? getUSMarketStatus().isOpen : getIndianMarketStatus().isOpen;
+          if (!marketIsOpen) continue;
 
-        for (const instKey of instrumentKeys) {
-          const isUS = instKey.startsWith('US|');
-
-          // STRICT RULE: Only dispatch 200ms ticks when the market is in the ACTIVE stage
-          const isActive = isUS ? getUSMarketStatus().isOpen : getIndianMarketStatus().isOpen;
-          if (!isActive) {
-            // Market is closed: NEVER emit ticks, prevent unwanted movement
-            continue;
-          }
-
-          const basePrice = authenticLtpMap.get(instKey) ?? currentTickPriceMap.get(instKey);
+          const basePrice = authenticLtpMap.get(instrumentKey) ?? currentTickPriceMap.get(instrumentKey);
           if (basePrice === undefined) continue;
-
-          let currentPrice = currentTickPriceMap.get(instKey) ?? basePrice;
-          const isIndex = instKey.includes('INDEX');
-
+          const currentPrice = currentTickPriceMap.get(instrumentKey) ?? basePrice;
           const tickStep = isUS ? 0.01 : 0.05;
           const maxDeviation = isUS ? 0.06 : 0.15;
           const diffFromBase = currentPrice - basePrice;
-
           let delta = 0;
-          if (diffFromBase > maxDeviation) {
-            delta = -tickStep;
-          } else if (diffFromBase < -maxDeviation) {
-            delta = tickStep;
-          } else {
-            const rand = Math.random();
-            if (rand < 0.25) delta = tickStep;
-            else if (rand < 0.50) delta = -tickStep;
-            else delta = 0;
+          if (diffFromBase > maxDeviation) delta = -tickStep;
+          else if (diffFromBase < -maxDeviation) delta = tickStep;
+          else {
+            const random = Math.random();
+            if (random < 0.25) delta = tickStep;
+            else if (random < 0.5) delta = -tickStep;
           }
 
-          const newPrice = Number((currentPrice + delta).toFixed(2));
-          const direction: 'UP' | 'DOWN' | 'EQUAL' =
-            newPrice > currentPrice
-              ? 'UP'
-              : newPrice < currentPrice
-              ? 'DOWN'
-              : lastTickDirectionMap.get(instKey) || 'EQUAL';
-
-          currentTickPriceMap.set(instKey, newPrice);
-          lastTickDirectionMap.set(instKey, direction);
-
-          const volumeDelta = isIndex ? 0 : Math.floor(Math.random() * 8) + 1;
-
-          const tickPayload = JSON.stringify({
-            type: 'TICK',
-            instrumentKey: instKey,
-            price: newPrice,
-            close: newPrice,
-            volumeDelta,
-            timestamp: nowSec,
-            direction,
+          const price = Number((currentPrice + delta).toFixed(2));
+          const direction = price > currentPrice ? 'UP' : price < currentPrice ? 'DOWN' : lastTickDirectionMap.get(instrumentKey) || 'EQUAL';
+          currentTickPriceMap.set(instrumentKey, price);
+          lastTickDirectionMap.set(instrumentKey, direction);
+          send({
+            type: 'TICK', instrumentKey, price, close: price,
+            volumeDelta: instrumentKey.includes('INDEX') ? 0 : Math.floor(Math.random() * 8) + 1,
+            timestamp: nowSec, direction,
           });
-
-          try {
-            controller.enqueue(encoder.encode(`data: ${tickPayload}\n\n`));
-          } catch {
-            // stream closed
-            return;
-          }
         }
       };
 
-      // Initial base price fetches
-      await pollUpstoxBasePrices();
-      await pollUSLiveQuotes();
-
-      // Dispatch 5 ticks/second at 200ms exclusively for active-stage instruments
-      const tickDispatchInterval = setInterval(dispatchActiveTicks, 200);
-
-      // Periodically refresh authentic base prices from exchange APIs
-      const upstoxPollInterval = setInterval(pollUpstoxBasePrices, 3000);
-      const usPollInterval = setInterval(pollUSLiveQuotes, 3000);
-
-      // Periodic SSE heartbeat every 15 seconds to prevent browser timeout
+      const upstoxInterval = setInterval(() => void pollUpstoxBasePrices(), 3000);
+      const yahooInterval = setInterval(() => void pollUSLiveQuotes(), 3000);
+      const tickInterval = setInterval(dispatchActiveTicks, 200);
       const heartbeatInterval = setInterval(() => {
-        if (isClosed) return;
-        try {
-          controller.enqueue(encoder.encode(': heartbeat\n\n'));
-        } catch {
-          // controller closed
+        if (!isClosed) {
+          try { controller.enqueue(encoder.encode(': heartbeat\n\n')); } catch { closeStream(); }
         }
       }, 15000);
 
-      request.signal.addEventListener('abort', () => {
+      const closeStream = () => {
+        if (isClosed) return;
         isClosed = true;
-        clearInterval(tickDispatchInterval);
-        clearInterval(upstoxPollInterval);
-        clearInterval(usPollInterval);
+        clearInterval(upstoxInterval);
+        clearInterval(yahooInterval);
+        clearInterval(tickInterval);
         clearInterval(heartbeatInterval);
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-      });
+        request.signal.removeEventListener('abort', closeStream);
+        try { controller.close(); } catch { /* already closed */ }
+      };
+      cleanup = closeStream;
+      request.signal.addEventListener('abort', closeStream, { once: true });
+      if (request.signal.aborted) closeStream();
+
+      void pollUpstoxBasePrices();
+      void pollUSLiveQuotes();
     },
+    cancel() { cleanup(); },
   });
 
   return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    },
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' },
   });
 }

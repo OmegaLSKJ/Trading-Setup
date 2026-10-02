@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StrategySummary } from '@/lib/strategy';
-import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap, History, ExternalLink, ArrowUpRight } from 'lucide-react';
+import { X, CheckCircle, TrendingUp, Activity, Flame, Zap, History, ExternalLink, ArrowUpRight } from 'lucide-react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { formatDateTimeWithZone, getTimezoneShortLabel, DEFAULT_TIMEZONE } from '@/lib/timezones';
 

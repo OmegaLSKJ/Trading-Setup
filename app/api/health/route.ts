@@ -1,12 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { isTokenConfigured, getUpstoxToken } from '@/lib/upstox-service';
 import { instrumentService } from '@/lib/instruments';
+import { allowApiRequest } from '@/lib/api-rate-limit';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!allowApiRequest(request, 'health', 60)) {
+    return NextResponse.json({ status: 'RATE_LIMITED', error: 'Too many health checks; try again shortly' }, { status: 429 });
+  }
   const tokenConfigured = isTokenConfigured();
   let upstoxConnected = false;
   let latencyMs = 0;
   let statusMessage = 'Checking...';
+  let responseStatus = 0;
 
   try {
     const startTime = Date.now();
@@ -19,6 +24,7 @@ export async function GET() {
     }
 
     const res = await fetch(testUrl, { headers, cache: 'no-store' });
+    responseStatus = res.status;
     latencyMs = Date.now() - startTime;
 
     if (res.status === 200) {
@@ -31,12 +37,12 @@ export async function GET() {
     } else {
       statusMessage = `HTTP ${res.status}`;
     }
-  } catch (err: any) {
-    statusMessage = `Network Error: ${err.message || 'Failed to connect'}`;
+  } catch (err: unknown) {
+    statusMessage = `Network Error: ${err instanceof Error ? err.message : 'Failed to connect'}`;
   }
 
   return NextResponse.json({
-    status: upstoxConnected ? 'CONNECTED' : tokenConfigured ? 'TOKEN_ERROR' : 'CONNECTED',
+    status: upstoxConnected ? 'CONNECTED' : tokenConfigured && [401, 403].includes(responseStatus) ? 'TOKEN_ERROR' : 'OFFLINE',
     tokenConfigured,
     upstoxConnected,
     latencyMs,
