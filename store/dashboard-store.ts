@@ -91,6 +91,7 @@ interface DashboardState {
   isTradesModalOpen: boolean;
   tradesModalSymbol: string | null;
   symbolTrades: Record<string, PastTrade[]>;
+  targetTradeNavigation: { symbol: string; time: number; id: string } | null;
 
   // Actions
   setActiveChartId: (id: string) => void;
@@ -138,6 +139,8 @@ interface DashboardState {
   setSettingsModalOpen: (open: boolean) => void;
   setTradesModalOpen: (open: boolean, symbol?: string | null) => void;
   recordTradesForSymbol: (symbol: string, trades: PastTrade[]) => void;
+  navigateToTrade: (symbol: string, time: number, id: string) => void;
+  clearTradeNavigation: () => void;
 
   // Hydration from LocalStorage
   loadPersistedState: () => void;
@@ -173,6 +176,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   isTradesModalOpen: false,
   tradesModalSymbol: null,
   symbolTrades: {},
+  targetTradeNavigation: null,
 
   setTradesModalOpen: (open, symbol = null) =>
     set({ isTradesModalOpen: open, tradesModalSymbol: symbol }),
@@ -184,6 +188,47 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         [symbol]: trades,
       },
     })),
+
+  navigateToTrade: (symbol, time, id) => {
+    const { charts, watchlist } = get();
+    // 1. Check if an existing chart is displaying this stock
+    const existingChart = charts.find(
+      (c) => c.instrument.trading_symbol.toUpperCase() === symbol.toUpperCase()
+    );
+
+    if (existingChart) {
+      set({
+        activeChartId: existingChart.id,
+        isTradesModalOpen: false,
+        targetTradeNavigation: { symbol, time, id },
+      });
+    } else {
+      // Otherwise assign to active chart
+      const activeId = get().activeChartId || charts[0]?.id;
+      const targetInstrument =
+        watchlist.find(
+          (w) => w.trading_symbol.toUpperCase() === symbol.toUpperCase()
+        ) || {
+          instrument_key: `NSE_EQ|${symbol}`,
+          trading_symbol: symbol,
+          name: symbol,
+          exchange: 'NSE',
+          segment: 'NSE_EQ',
+        };
+
+      if (activeId) {
+        get().updateChartInstrument(activeId, targetInstrument);
+      }
+
+      set({
+        activeChartId: activeId,
+        isTradesModalOpen: false,
+        targetTradeNavigation: { symbol, time, id },
+      });
+    }
+  },
+
+  clearTradeNavigation: () => set({ targetTradeNavigation: null }),
 
   setActiveChartId: (id) => set({ activeChartId: id }),
 

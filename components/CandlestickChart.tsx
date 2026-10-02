@@ -25,6 +25,7 @@ import { getIndianMarketStatus } from '@/lib/market-hours';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
+  scrollToTime: (unixSec: number) => void;
 }
 
 interface Props {
@@ -76,6 +77,42 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const strategyPendingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const { syncSettings } = useDashboardStore();
+
+    useImperativeHandle(ref, () => ({
+      resetScale: () => {
+        if (chartApiRef.current && activeCandlesRef.current.length > 0) {
+          const total = activeCandlesRef.current.length;
+          chartApiRef.current.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, total - 75),
+            to: total + 6,
+          });
+        } else if (chartApiRef.current) {
+          chartApiRef.current.timeScale().resetTimeScale();
+        }
+      },
+      scrollToTime: (unixSec: number) => {
+        if (!chartApiRef.current || !activeCandlesRef.current) return;
+        const list = activeCandlesRef.current;
+        if (list.length === 0) return;
+
+        let closestIdx = -1;
+        let minDiff = Infinity;
+        for (let i = 0; i < list.length; i++) {
+          const diff = Math.abs(list[i].time - unixSec);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closestIdx = i;
+          }
+        }
+
+        if (closestIdx !== -1) {
+          chartApiRef.current.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, closestIdx - 15),
+            to: Math.min(list.length - 1 + 8, closestIdx + 20),
+          });
+        }
+      },
+    }));
 
     const [hoverData, setHoverData] = useState<{
       open?: number;
@@ -150,17 +187,6 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       }
     }, [runLiveStrategy]);
 
-    useImperativeHandle(ref, () => ({
-      resetScale: () => {
-        if (chartApiRef.current && activeCandlesRef.current.length > 0) {
-          const total = activeCandlesRef.current.length;
-          chartApiRef.current.timeScale().setVisibleLogicalRange({
-            from: Math.max(0, total - 75),
-            to: total + 6,
-          });
-        }
-      },
-    }));
 
     // Initialize chart
     useEffect(() => {

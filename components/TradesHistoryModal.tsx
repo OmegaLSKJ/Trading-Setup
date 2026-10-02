@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { PastTrade } from '@/lib/strategy';
 import {
@@ -16,6 +16,8 @@ import {
   ShieldAlert,
   Sparkles,
   BarChart3,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 export const TradesHistoryModal: React.FC = () => {
@@ -25,6 +27,7 @@ export const TradesHistoryModal: React.FC = () => {
     setTradesModalOpen,
     symbolTrades,
     charts,
+    navigateToTrade,
   } = useDashboardStore();
 
   const [selectedSymbol, setSelectedSymbol] = useState<string>(
@@ -34,6 +37,14 @@ export const TradesHistoryModal: React.FC = () => {
     'ALL' | 'WINNERS' | 'LOSERS' | 'OPEN'
   >('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (direction: 'left' | 'right') => {
+    if (tableContainerRef.current) {
+      const offset = direction === 'left' ? -350 : 350;
+      tableContainerRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
 
   // Keep selectedSymbol synced with store when modal opens
   React.useEffect(() => {
@@ -66,7 +77,10 @@ export const TradesHistoryModal: React.FC = () => {
       // Sort newest entry first
       return combined.sort((a, b) => b.entryTime - a.entryTime);
     }
-    return symbolTrades[selectedSymbol] || [];
+    return (symbolTrades[selectedSymbol] || []).map((t) => ({
+      ...t,
+      symbol: t.symbol || selectedSymbol,
+    }));
   }, [symbolTrades, selectedSymbol]);
 
   // Filtered trades
@@ -400,8 +414,38 @@ export const TradesHistoryModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Scrollable Trades Table */}
-        <div className="flex-1 overflow-y-auto min-h-[250px] p-4">
+        {/* Scrollable Trades Table with Horizontal & Vertical Scroller */}
+        <div className="flex-1 overflow-hidden min-h-[300px] flex flex-col p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 px-1 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5 text-purple-300 font-medium">
+              <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+              <span>Click any trade row to jump directly to it on the chart</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleScroll('left')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-purple-900/60 text-slate-300 hover:text-white border border-slate-700 hover:border-purple-500/80 transition-all cursor-pointer text-[11px] font-semibold select-none"
+                title="Scroll table left"
+              >
+                <ChevronLeft className="w-3.5 h-3.5 text-purple-400" />
+                <span>Scroll Left</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleScroll('right')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 hover:text-white border border-purple-600 hover:border-purple-400 transition-all cursor-pointer text-[11px] font-semibold select-none"
+                title="Scroll right to see Net Return & Duration"
+              >
+                <span>Scroll Right</span>
+                <ChevronRight className="w-3.5 h-3.5 text-purple-300" />
+              </button>
+              <span className="text-[11px] text-slate-400 font-mono hidden md:flex items-center gap-1 bg-slate-900/90 px-2 py-1 rounded border border-slate-800 select-none">
+                <span>⇄ Drag bottom scrollbar</span>
+              </span>
+            </div>
+          </div>
+
           {filteredTrades.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-center p-6 bg-[#080d1a] border border-slate-800/80 rounded-xl">
               <History className="w-12 h-12 text-slate-600 mb-3 stroke-[1.5]" />
@@ -426,22 +470,25 @@ export const TradesHistoryModal: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className="border border-slate-800 rounded-lg overflow-hidden bg-[#070b14]">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#0e1626] border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider select-none">
-                    <th className="py-2.5 px-3">#ID</th>
-                    <th className="py-2.5 px-3">Symbol</th>
-                    <th className="py-2.5 px-3">Tier</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Entry Time (IST)</th>
-                    <th className="py-2.5 px-3 text-right">Entry Price</th>
-                    <th className="py-2.5 px-3 text-right">Target (+2%)</th>
-                    <th className="py-2.5 px-3">Exit Time (IST)</th>
-                    <th className="py-2.5 px-3 text-right">Exit Price</th>
-                    <th className="py-2.5 px-3">Exit Reason</th>
-                    <th className="py-2.5 px-3 text-center">Duration</th>
-                    <th className="py-2.5 px-3 text-right">Net Return</th>
+            <div
+              ref={tableContainerRef}
+              className="flex-1 overflow-x-auto overflow-y-auto max-h-[58vh] border border-slate-800 rounded-lg bg-[#070b14] shadow-inner table-scrollbar"
+            >
+              <table className="min-w-[1380px] w-full text-left text-xs border-collapse">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[#0e1626] border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider select-none shadow-xs">
+                    <th className="py-2.5 px-3 min-w-[90px]">#ID</th>
+                    <th className="py-2.5 px-3 min-w-[110px]">Symbol</th>
+                    <th className="py-2.5 px-3 min-w-[100px]">Tier</th>
+                    <th className="py-2.5 px-3 min-w-[90px]">Status</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Entry Time (IST)</th>
+                    <th className="py-2.5 px-3 text-right min-w-[110px]">Entry Price</th>
+                    <th className="py-2.5 px-3 text-right min-w-[110px]">Target (+2%)</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Exit Time (IST)</th>
+                    <th className="py-2.5 px-3 text-right min-w-[110px]">Exit Price</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Exit Reason</th>
+                    <th className="py-2.5 px-3 text-center min-w-[120px]">Duration</th>
+                    <th className="py-2.5 px-3 text-right min-w-[130px]">Net Return</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
@@ -453,27 +500,30 @@ export const TradesHistoryModal: React.FC = () => {
                     return (
                       <tr
                         key={`${t.id}-${t.entryTime}-${idx}`}
-                        className="hover:bg-slate-800/40 transition-colors"
+                        onClick={() => {
+                          navigateToTrade(t.symbol, t.entryTime, t.id);
+                        }}
+                        className="hover:bg-purple-950/40 hover:border-purple-500/50 cursor-pointer transition-all group"
+                        title={`Click to jump to ${t.symbol} chart at ${t.entryTimeString}`}
                       >
                         {/* ID */}
                         <td className="py-2.5 px-3 font-semibold text-slate-300 whitespace-nowrap">
-                          {t.id}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-purple-300 font-bold group-hover:text-purple-200">{t.id}</span>
+                            <ArrowUpRight className="w-3.5 h-3.5 text-purple-400 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+                          </div>
                         </td>
 
                         {/* Symbol */}
                         <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">
-                          {t.symbol}
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 text-slate-200">
+                            {t.symbol}
+                          </span>
                         </td>
 
                         {/* Tier */}
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              t.tier === '3-CANDLE'
-                                ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
-                                : 'bg-cyan-950/80 text-cyan-300 border border-cyan-800'
-                            }`}
-                          >
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
                             {t.tier}
                           </span>
                         </td>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StrategySummary } from '@/lib/strategy';
-import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap, History, ExternalLink } from 'lucide-react';
+import { Target, X, CheckCircle, TrendingUp, ShieldAlert, Activity, Flame, Zap, History, ExternalLink, ArrowUpRight } from 'lucide-react';
 import { useDashboardStore } from '@/store/dashboard-store';
 
 interface Props {
@@ -17,7 +17,7 @@ export const StrategyModal: React.FC<Props> = ({
   strategySummary,
 }) => {
   const [activeTab, setActiveTab] = useState<'RULES' | 'TRADES'>('RULES');
-  const { setTradesModalOpen } = useDashboardStore();
+  const { setTradesModalOpen, navigateToTrade } = useDashboardStore();
 
   if (!isOpen) return null;
 
@@ -146,37 +146,53 @@ export const StrategyModal: React.FC<Props> = ({
                 </div>
               </div>
             ) : (
-              <div className="border border-slate-800 rounded-lg overflow-hidden bg-[#090d16]">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-[#0e1626] border-b border-slate-800 text-[10px] font-semibold text-slate-400 uppercase">
-                      <th className="py-2 px-3">#ID</th>
-                      <th className="py-2 px-3">Tier</th>
-                      <th className="py-2 px-3">Status</th>
-                      <th className="py-2 px-3">Entry Time (IST)</th>
-                      <th className="py-2 px-3 text-right">Entry</th>
-                      <th className="py-2 px-3 text-right">Target (+2%)</th>
-                      <th className="py-2 px-3">Exit Time (IST)</th>
-                      <th className="py-2 px-3 text-right">Exit</th>
-                      <th className="py-2 px-3">Exit Reason</th>
-                      <th className="py-2 px-3 text-center">Bars</th>
-                      <th className="py-2 px-3 text-right">PnL (%)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                    {trades.map((t, idx) => {
-                      const isWin = t.pnlPercent > 0;
-                      const isLoss = t.pnlPercent < 0;
-                      return (
-                        <tr key={`${t.id}-${idx}`} className="hover:bg-slate-800/30">
-                          <td className="py-2 px-3 text-slate-300 font-semibold">{t.id}</td>
-                          <td className="py-2 px-3">
-                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
-                              t.tier === '3-CANDLE' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-cyan-950 text-cyan-300 border border-cyan-800'
-                            }`}>
-                              {t.tier}
-                            </span>
-                          </td>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                  <span className="text-purple-300 font-medium">👉 Click any trade to jump directly to it on the chart</span>
+                  <span className="text-slate-500 font-mono">Scroll ⇄ for full details</span>
+                </div>
+                <div className="border border-slate-800 rounded-lg overflow-x-auto overflow-y-auto max-h-[50vh] bg-[#090d16] table-scrollbar">
+                  <table className="min-w-[1050px] w-full text-left text-xs border-collapse">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-[#0e1626] border-b border-slate-800 text-[10px] font-semibold text-slate-400 uppercase shadow-xs">
+                        <th className="py-2 px-3 min-w-[80px]">#ID</th>
+                        <th className="py-2 px-3 min-w-[90px]">Tier</th>
+                        <th className="py-2 px-3 min-w-[80px]">Status</th>
+                        <th className="py-2 px-3 min-w-[170px]">Entry Time (IST)</th>
+                        <th className="py-2 px-3 text-right min-w-[90px]">Entry</th>
+                        <th className="py-2 px-3 text-right min-w-[90px]">Target (+2%)</th>
+                        <th className="py-2 px-3 min-w-[170px]">Exit Time (IST)</th>
+                        <th className="py-2 px-3 text-right min-w-[90px]">Exit</th>
+                        <th className="py-2 px-3 min-w-[160px]">Exit Reason</th>
+                        <th className="py-2 px-3 text-center min-w-[70px]">Bars</th>
+                        <th className="py-2 px-3 text-right min-w-[90px]">PnL (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {trades.map((t, idx) => {
+                        const isWin = t.pnlPercent > 0;
+                        const isLoss = t.pnlPercent < 0;
+                        return (
+                          <tr
+                            key={`${t.id}-${idx}`}
+                            onClick={() => {
+                              onClose();
+                              navigateToTrade(tradingSymbol, t.entryTime, t.id);
+                            }}
+                            className="hover:bg-purple-950/40 hover:border-purple-500/50 cursor-pointer transition-all group"
+                            title={`Click to jump to ${tradingSymbol} chart at ${t.entryTimeString}`}
+                          >
+                            <td className="py-2 px-3 text-slate-300 font-semibold whitespace-nowrap">
+                              <div className="flex items-center gap-1">
+                                <span className="text-purple-300 font-bold group-hover:text-purple-200">{t.id}</span>
+                                <ArrowUpRight className="w-3 h-3 text-purple-400 opacity-60 group-hover:opacity-100" />
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                                {t.tier}
+                              </span>
+                            </td>
                           <td className="py-2 px-3">
                             <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
                               t.status === 'OPEN' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-slate-800 text-slate-300 border border-slate-700'
@@ -204,9 +220,10 @@ export const StrategyModal: React.FC<Props> = ({
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
-        ) : (
+            </div>
+          )}
+        </div>
+      ) : (
         <div className="p-5 overflow-y-auto space-y-5 text-xs text-slate-200">
           {/* Key Metrics */}
           <div className="grid grid-cols-4 gap-3">

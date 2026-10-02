@@ -72,7 +72,35 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
     autoRefreshInterval,
     setTradesModalOpen,
     recordTradesForSymbol,
+    targetTradeNavigation,
+    clearTradeNavigation,
   } = useDashboardStore();
+
+  const [navigatedTradeToast, setNavigatedTradeToast] = useState<string | null>(null);
+
+  // Jump to trade on chart when clicked in the Past Trades ledger
+  useEffect(() => {
+    if (
+      targetTradeNavigation &&
+      targetTradeNavigation.symbol.toUpperCase() === panel.instrument.trading_symbol.toUpperCase()
+    ) {
+      const timeToScroll = targetTradeNavigation.time;
+      const tradeId = targetTradeNavigation.id;
+      setNavigatedTradeToast(`Navigated to ${tradeId} (${panel.instrument.trading_symbol})`);
+
+      // Scroll after chart canvas has rendered and retry to ensure candle alignment
+      const delays = [80, 250, 600];
+      delays.forEach((delay) => {
+        setTimeout(() => {
+          chartRef.current?.scrollToTime(timeToScroll);
+        }, delay);
+      });
+
+      clearTradeNavigation();
+      const timer = setTimeout(() => setNavigatedTradeToast(null), 3800);
+      return () => clearTimeout(timer);
+    }
+  }, [targetTradeNavigation, panel.instrument.trading_symbol, clearTradeNavigation, candles]);
 
   const handleStrategyUpdate = useCallback(
     (summary: StrategySummary) => {
@@ -532,6 +560,13 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
       {/* Main Candlestick Chart Canvas */}
       <div className="flex-1 w-full relative">
+        {navigatedTradeToast && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-purple-950/95 border border-purple-500/80 text-purple-200 px-3.5 py-1.5 rounded-full text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none animate-bounce">
+            <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+            <Target className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+            <span>{navigatedTradeToast}</span>
+          </div>
+        )}
         <CandlestickChart
           ref={chartRef}
           chartId={panel.id}
