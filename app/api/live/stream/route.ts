@@ -45,29 +45,26 @@ export async function GET(request: NextRequest) {
         const currentMarketStatus = getIndianMarketStatus();
         const nowSec = Math.floor(Date.now() / 1000);
 
-        // If market is closed, send authentic market status event
-        if (!currentMarketStatus.isOpen) {
-          const closedPing = JSON.stringify({
-            type: 'MARKET_STATUS',
-            isOpen: false,
-            session: currentMarketStatus.session,
-            exchange: currentMarketStatus.exchange,
-            reason: currentMarketStatus.reason,
-            timeIST: currentMarketStatus.timeIST,
-          });
-          try {
-            controller.enqueue(encoder.encode(`data: ${closedPing}\n\n`));
-          } catch {
-            // controller closed
-          }
-          return;
+        // Send market status event
+        const marketStatusPayload = JSON.stringify({
+          type: 'MARKET_STATUS',
+          isOpen: currentMarketStatus.isOpen,
+          session: currentMarketStatus.session,
+          exchange: currentMarketStatus.exchange,
+          reason: currentMarketStatus.reason,
+          timeIST: currentMarketStatus.timeIST,
+        });
+        try {
+          controller.enqueue(encoder.encode(`data: ${marketStatusPayload}\n\n`));
+        } catch {
+          // controller closed
         }
 
-        // Market is OPEN: Fetch authentic Upstox LTP quotes if token is available
+        // Fetch authentic Upstox LTP quotes if token is available
         if (!token) {
           const noTokenMsg = JSON.stringify({
             type: 'NOTICE',
-            message: 'Market is open, but UPSTOX_TOKEN is not configured in .env.local for live quotes.',
+            message: 'UPSTOX_TOKEN is not configured in .env.local for live quotes.',
           });
           try {
             controller.enqueue(encoder.encode(`data: ${noTokenMsg}\n\n`));
