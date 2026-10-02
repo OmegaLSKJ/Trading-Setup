@@ -18,6 +18,7 @@ import {
   X,
   SlidersHorizontal,
   ChevronDown,
+  ChevronUp,
   RotateCcw,
   Search,
   Target,
@@ -286,7 +287,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       onMouseDownCapture={() => setActiveChartId(panel.id)}
       className={`relative flex flex-col h-full w-full bg-[#0b0f19] border transition-all duration-150 overflow-hidden ${
         isActive
-          ? 'border-emerald-500/80 shadow-lg shadow-emerald-950/20'
+          ? 'border-2 border-emerald-500 shadow-xl shadow-emerald-950/40 ring-1 ring-emerald-500/50'
           : 'border-slate-800/80 hover:border-slate-700'
       }`}
     >
@@ -330,6 +331,12 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
               </span>
             );
           })()}
+
+          {isActive && (
+            <span className="text-[8px] uppercase font-mono px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold shrink-0 hidden md:inline">
+              ACTIVE
+            </span>
+          )}
 
           {/* Live Price with authentic closing/LTP */}
           {livePrice !== null && (
@@ -586,6 +593,30 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             )}
           </div>
 
+          {/* Pan Graph Up / Drag Top */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              chartRef.current?.panVertical?.(35);
+            }}
+            className="p-1 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 transition-colors cursor-pointer hidden sm:flex"
+            title="Pan Graph Up / Drag Top (or Shift+Drag on chart / Drag price scale)"
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Pan Graph Down / Drag Down */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              chartRef.current?.panVertical?.(-35);
+            }}
+            className="p-1 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 transition-colors cursor-pointer hidden sm:flex"
+            title="Pan Graph Down / Drag Down (or Shift+Drag on chart / Drag price scale)"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+
           {/* Reset scale */}
           <button
             onClick={(e) => {
@@ -593,7 +624,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
               chartRef.current?.resetScale();
             }}
             className="p-1 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-            title="Auto / Reset Scale"
+            title="Auto Fit / Reset Scale (or double-click price scale)"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>

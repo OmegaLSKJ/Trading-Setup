@@ -88,7 +88,7 @@ export interface ChartPanelState {
   isExpanded?: boolean;
 }
 
-export type LayoutGridMode = '1' | '2h' | '2v' | '4' | '6' | '8';
+export type LayoutGridMode = '1' | '2h' | '2v' | '4' | '6';
 
 export interface SyncSettings {
   crosshair: boolean;

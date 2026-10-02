@@ -75,7 +75,7 @@ const INITIAL_CHARTS: ChartPanelState[] = DEFAULT_INSTRUMENTS.map((inst, idx) =>
   isExpanded: false,
 }));
 
-const ALLOWED_LAYOUT_MODES = new Set<LayoutGridMode>(['1', '2h', '2v', '4', '6', '8']);
+const ALLOWED_LAYOUT_MODES = new Set<LayoutGridMode>(['1', '2h', '2v', '4', '6']);
 const ALLOWED_TIMEFRAMES = new Set<Timeframe>(['1m', '3m', '5m', '10m', '15m', '30m', '1h', '1D']);
 const ALLOWED_DATE_PRESETS = new Set<DateRangePreset>(['today', '5D', '1M', '3M', '6M', 'YTD', '1Y', 'custom']);
 const ALLOWED_REFRESH_INTERVALS = new Set<AutoRefreshInterval>([0, 5000, 10000, 30000, 60000]);
@@ -468,7 +468,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   addChart: (instrument) => {
     const { charts, layoutMode, watchlist } = get();
-    if (charts.length >= 8) return;
+    if (charts.length >= 6) return; // Strict max 6 chart allowance
 
     const targetInst =
       instrument ||
@@ -491,7 +491,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     if (layoutMode === '1' && newCount >= 2) nextLayoutMode = '2h';
     else if ((layoutMode === '2h' || layoutMode === '2v') && newCount >= 3) nextLayoutMode = '4';
     else if (layoutMode === '4' && newCount >= 5) nextLayoutMode = '6';
-    else if (layoutMode === '6' && newCount >= 7) nextLayoutMode = '8';
 
     set({
       charts: nextCharts,

@@ -38,6 +38,7 @@ import { formatDateTimeWithZone, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/
 export interface CandlestickChartHandle {
   resetScale: () => void;
   scrollToTime: (unixSec: number) => void;
+  panVertical?: (deltaPx: number) => void;
 }
 
 interface Props {
@@ -184,6 +185,13 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     useImperativeHandle(ref, () => ({
       resetScale: () => {
+        if (candleSeriesRef.current) {
+          try {
+            candleSeriesRef.current.priceScale().applyOptions({ autoScale: true });
+          } catch {
+            // ignore
+          }
+        }
         if (chartApiRef.current && activeCandlesRef.current.length > 0) {
           const total = activeCandlesRef.current.length;
           chartApiRef.current.timeScale().setVisibleLogicalRange({
@@ -192,6 +200,24 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           });
         } else if (chartApiRef.current) {
           chartApiRef.current.timeScale().resetTimeScale();
+        }
+      },
+      panVertical: (deltaPx: number) => {
+        if (!candleSeriesRef.current || !chartContainerRef.current) return;
+        try {
+          const priceScale = candleSeriesRef.current.priceScale();
+          const visibleRange = priceScale.getVisibleRange();
+          const height = chartContainerRef.current.clientHeight;
+          if (visibleRange && height > 0) {
+            const span = visibleRange.to - visibleRange.from;
+            const deltaPrice = (deltaPx / height) * span;
+            priceScale.setVisibleRange({
+              from: visibleRange.from + deltaPrice,
+              to: visibleRange.to + deltaPrice,
+            });
+          }
+        } catch {
+          // ignore
         }
       },
       scrollToTime: (unixSec: number) => {
@@ -356,6 +382,24 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             return formatTickMark(time, tickMarkType, selectedTimezoneRef.current);
           },
         },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        handleScale: {
+          axisPressedMouseMove: {
+            time: true,
+            price: true,
+          },
+          axisDoubleClickReset: {
+            time: true,
+            price: true,
+          },
+          mouseWheel: true,
+          pinch: true,
+        },
       });
 
       chartApiRef.current = chart;
@@ -498,6 +542,68 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
       });
 
+      // Vertical dragging support (drag up / drag down on canvas with Right-click, Middle-click, or Shift+drag)
+      let isVerticalDragging = false;
+      let lastDragY = 0;
+
+      const handlePointerDown = (e: PointerEvent) => {
+        if (e.button === 2 || e.button === 1 || (e.button === 0 && (e.shiftKey || e.altKey))) {
+          isVerticalDragging = true;
+          lastDragY = e.clientY;
+          try {
+            container.setPointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+          e.preventDefault();
+        }
+      };
+
+      const handlePointerMove = (e: PointerEvent) => {
+        if (!isVerticalDragging || !candleSeriesRef.current) return;
+        const dy = e.clientY - lastDragY;
+        lastDragY = e.clientY;
+
+        try {
+          const priceScale = candleSeriesRef.current.priceScale();
+          const visibleRange = priceScale.getVisibleRange();
+          if (visibleRange && container.clientHeight > 0) {
+            const span = visibleRange.to - visibleRange.from;
+            const priceDelta = (dy / container.clientHeight) * span;
+            priceScale.setVisibleRange({
+              from: visibleRange.from + priceDelta,
+              to: visibleRange.to + priceDelta,
+            });
+          }
+        } catch {
+          // ignore
+        }
+        e.preventDefault();
+      };
+
+      const handlePointerUp = (e: PointerEvent) => {
+        if (isVerticalDragging) {
+          isVerticalDragging = false;
+          try {
+            container.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      const handleContextMenu = (e: MouseEvent) => {
+        if (isVerticalDragging) {
+          e.preventDefault();
+        }
+      };
+
+      container.addEventListener('pointerdown', handlePointerDown);
+      container.addEventListener('pointermove', handlePointerMove);
+      container.addEventListener('pointerup', handlePointerUp);
+      container.addEventListener('pointercancel', handlePointerUp);
+      container.addEventListener('contextmenu', handleContextMenu);
+
       // Resize observer
       const resizeObserver = new ResizeObserver((entries) => {
         if (!entries || entries.length === 0) return;
@@ -509,7 +615,11 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       resizeObserver.observe(container);
 
       return () => {
-        container.removeEventListener('pointerleave', handlePointerLeave);
+        container.removeEventListener('pointerdown', handlePointerDown);
+        container.removeEventListener('pointermove', handlePointerMove);
+        container.removeEventListener('pointerup', handlePointerUp);
+        container.removeEventListener('pointercancel', handlePointerUp);
+        container.removeEventListener('contextmenu', handleContextMenu);
         unsubCrosshair();
         resizeObserver.disconnect();
         chart.remove();

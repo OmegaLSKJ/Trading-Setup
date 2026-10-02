@@ -16,16 +16,16 @@ import {
   ChevronDown,
   Target,
   Globe,
+  Check,
 } from 'lucide-react';
 import { TIMEZONE_OPTIONS, getTimezoneOption } from '@/lib/timezones';
 
-const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string }[] = [
-  { mode: '1', label: '1 Chart', icon: '■' },
-  { mode: '2h', label: '2 Charts (Horizontal)', icon: '▬▬' },
-  { mode: '2v', label: '2 Charts (Vertical)', icon: '❚❚' },
-  { mode: '4', label: '4 Grid', icon: '⊞' },
-  { mode: '6', label: '6 Grid', icon: '▦' },
-  { mode: '8', label: '8 Grid', icon: '▤' },
+const LAYOUT_OPTIONS: { mode: LayoutGridMode; label: string; icon: string; description: string }[] = [
+  { mode: '1', label: '1 Chart', icon: '■', description: 'Single view' },
+  { mode: '2h', label: '2 Charts (Horizontal)', icon: '▬▬', description: '2 stacked rows' },
+  { mode: '2v', label: '2 Charts (Vertical)', icon: '❚❚', description: '2 columns' },
+  { mode: '4', label: '4 Grid', icon: '⊞', description: '2x2 quad layout' },
+  { mode: '6', label: '6 Grid', icon: '▦', description: 'Max 6 grid (3x2)' },
 ];
 
 const GLOBAL_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '1h', '1D'];
@@ -216,49 +216,80 @@ export const TopBar: React.FC = () => {
         <div className="relative">
           <button
             onClick={() => setIsLayoutDropdownOpen(!isLayoutDropdownOpen)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
-            title="Choose grid layout"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 hover:text-white transition-all cursor-pointer shadow-xs"
+            title="Choose grid layout (Max 6 charts)"
           >
             <LayoutGrid className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="font-semibold uppercase">{layoutMode} Grid</span>
+            <span className="font-semibold uppercase tracking-wide">{layoutMode} Grid</span>
             <ChevronDown className="w-3 h-3 text-slate-400" />
           </button>
 
           {isLayoutDropdownOpen && (
             <div
               onClick={() => setIsLayoutDropdownOpen(false)}
-              className="absolute right-0 top-full mt-1 w-48 bg-[#1e293b] border border-slate-700 rounded shadow-2xl py-1 z-50 text-xs"
+              className="absolute right-0 top-full mt-1.5 w-60 bg-[#162032] border border-slate-700/90 rounded-lg shadow-2xl p-1.5 z-50 text-xs backdrop-blur-md"
             >
-              <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60">
-                Grid Layouts
+              <div className="flex items-center justify-between px-2.5 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mb-1">
+                <span>Grid Layouts</span>
+                <span className="text-emerald-400 font-mono text-[9px] bg-emerald-950/80 px-1 py-0.2 rounded border border-emerald-800/40">
+                  Max 6 Charts
+                </span>
               </div>
-              {LAYOUT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.mode}
-                  onClick={() => setLayoutMode(opt.mode)}
-                  className={`w-full flex items-center justify-between px-3 py-2 hover:bg-slate-700/60 transition-colors cursor-pointer ${
-                    layoutMode === opt.mode
-                      ? 'text-emerald-400 font-semibold bg-slate-800/40'
-                      : 'text-slate-300'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="font-mono text-slate-400">{opt.icon}</span>
-                    <span>{opt.label}</span>
-                  </span>
-                </button>
-              ))}
+              <div className="space-y-0.5">
+                {LAYOUT_OPTIONS.map((opt) => {
+                  const isSelected = layoutMode === opt.mode;
+                  return (
+                    <button
+                      key={opt.mode}
+                      onClick={() => setLayoutMode(opt.mode)}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md transition-all cursor-pointer text-left ${
+                        isSelected
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-bold shadow-xs'
+                          : 'text-slate-300 hover:bg-slate-800/70 border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className={`text-base font-mono shrink-0 ${isSelected ? 'text-emerald-400' : 'text-slate-400'}`}>
+                          {opt.icon}
+                        </span>
+                        <div className="flex flex-col min-w-0">
+                          <span className="truncate">{opt.label}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            {opt.description}
+                          </span>
+                        </div>
+                      </div>
+                      {isSelected ? (
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <span className="text-[8.5px] uppercase font-mono px-1 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                            Active
+                          </span>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
 
-        {/* Add Chart Button */}
+        {/* Add Chart Button (capped at 6) */}
         <button
           onClick={() => addChart()}
-          className="p-1.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
-          title="Add another chart panel"
+          disabled={charts.length >= 6}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded transition-all cursor-pointer border ${
+            charts.length >= 6
+              ? 'bg-slate-800/30 border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+              : 'bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/30 text-emerald-400 hover:text-emerald-300 shadow-xs'
+          }`}
+          title={charts.length >= 6 ? 'Maximum 6 Charts limit reached' : `Add Chart (${charts.length}/6)`}
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-3.5 h-3.5" />
+          <span className="text-[11px] font-mono font-semibold hidden md:inline">
+            {charts.length}/6
+          </span>
         </button>
 
         {/* Layouts Manager Modal Trigger */}
