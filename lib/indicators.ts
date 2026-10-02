@@ -83,15 +83,14 @@ export function calculateVWAP(candles: Candle[]): IndicatorPoint[] {
   const results: IndicatorPoint[] = [];
   let cumulativeTypicalVolume = 0;
   let cumulativeVolume = 0;
-  let currentDay = '';
+  let currentDay = -1;
 
   for (const c of candles) {
-    // Extract date string (YYYY-MM-DD) from timestamp in IST
-    const dateObj = new Date(c.time * 1000);
-    const dayStr = dateObj.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    // Fast integer day boundary detection for IST (UTC+5:30 = 19,800 seconds)
+    const dayNumber = Math.floor((c.time + 19800) / 86400);
 
-    if (dayStr !== currentDay) {
-      currentDay = dayStr;
+    if (dayNumber !== currentDay) {
+      currentDay = dayNumber;
       cumulativeTypicalVolume = 0;
       cumulativeVolume = 0;
     }

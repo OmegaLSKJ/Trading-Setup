@@ -59,22 +59,20 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [tickFlash, setTickFlash] = useState<'UP' | 'DOWN' | null>(null);
   const [strategySummary, setStrategySummary] = useState<StrategySummary | null>(null);
 
-  const {
-    activeChartId,
-    setActiveChartId,
-    updateChartTimeframe,
-    updateChartDateRange,
-    toggleChartIndicator,
-    setChartExpanded,
-    removeChart,
-    openSymbolSearch,
-    globalRefreshTrigger,
-    autoRefreshInterval,
-    setTradesModalOpen,
-    recordTradesForSymbol,
-    targetTradeNavigation,
-    clearTradeNavigation,
-  } = useDashboardStore();
+  const activeChartId = useDashboardStore((s) => s.activeChartId);
+  const setActiveChartId = useDashboardStore((s) => s.setActiveChartId);
+  const updateChartTimeframe = useDashboardStore((s) => s.updateChartTimeframe);
+  const updateChartDateRange = useDashboardStore((s) => s.updateChartDateRange);
+  const toggleChartIndicator = useDashboardStore((s) => s.toggleChartIndicator);
+  const setChartExpanded = useDashboardStore((s) => s.setChartExpanded);
+  const removeChart = useDashboardStore((s) => s.removeChart);
+  const openSymbolSearch = useDashboardStore((s) => s.openSymbolSearch);
+  const globalRefreshTrigger = useDashboardStore((s) => s.globalRefreshTrigger);
+  const autoRefreshInterval = useDashboardStore((s) => s.autoRefreshInterval);
+  const setTradesModalOpen = useDashboardStore((s) => s.setTradesModalOpen);
+  const recordTradesForSymbol = useDashboardStore((s) => s.recordTradesForSymbol);
+  const targetTradeNavigation = useDashboardStore((s) => s.targetTradeNavigation);
+  const clearTradeNavigation = useDashboardStore((s) => s.clearTradeNavigation);
 
   const [navigatedTradeToast, setNavigatedTradeToast] = useState<string | null>(null);
 
@@ -172,7 +170,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   }, [autoRefreshInterval, loadCandles]);
 
   // Callback when a real-time micro-tick arrives from the live stream
-  const handleLivePriceUpdate = (
+  const handleLivePriceUpdate = useCallback((
     price: number,
     change: number,
     changePercent: number,
@@ -186,7 +184,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       setTickFlash(direction);
       setTimeout(() => setTickFlash(null), 180);
     }
-  };
+  }, []);
 
   const isPositive = liveChange >= 0;
 

@@ -183,12 +183,27 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ isTradesModalOpen: open, tradesModalSymbol: symbol }),
 
   recordTradesForSymbol: (symbol, trades) =>
-    set((state) => ({
-      symbolTrades: {
-        ...state.symbolTrades,
-        [symbol]: trades,
-      },
-    })),
+    set((state) => {
+      const existing = state.symbolTrades[symbol];
+      if (existing && existing.length === trades.length) {
+        const lastExisting = existing[existing.length - 1];
+        const lastNew = trades[trades.length - 1];
+        if (
+          lastExisting?.id === lastNew?.id &&
+          lastExisting?.status === lastNew?.status &&
+          lastExisting?.exitPrice === lastNew?.exitPrice &&
+          lastExisting?.pnlAmount === lastNew?.pnlAmount
+        ) {
+          return state; // No change, prevent store notification
+        }
+      }
+      return {
+        symbolTrades: {
+          ...state.symbolTrades,
+          [symbol]: trades,
+        },
+      };
+    }),
 
   navigateToTrade: (symbol, time, id) => {
     const { charts, watchlist } = get();

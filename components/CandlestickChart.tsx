@@ -90,6 +90,16 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const isSyncingRange = useRef(false);
     const lastStrategyRunTimeRef = useRef<number>(0);
     const strategyPendingTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const lastIndicatorCalcTimeRef = useRef<number>(0);
+
+    const onLivePriceUpdateRef = useRef(onLivePriceUpdate);
+    onLivePriceUpdateRef.current = onLivePriceUpdate;
+
+    const onStrategyUpdateRef = useRef(onStrategyUpdate);
+    onStrategyUpdateRef.current = onStrategyUpdate;
+
+    const indicatorsRef = useRef(indicators);
+    indicatorsRef.current = indicators;
 
     const { syncSettings } = useDashboardStore();
 
@@ -145,8 +155,9 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const runLiveStrategy = useCallback(() => {
       if (!markersPluginRef.current) return;
       const list = activeCandlesRef.current;
+      const currentIndicators = indicatorsRef.current;
 
-      if (indicators.strategy && list && list.length >= 15) {
+      if (currentIndicators.strategy && list && list.length >= 15) {
         try {
           const summary = evaluateStrategy(list, tradingSymbol);
           const chartMarkers = summary.markers.map((m) => ({
@@ -159,8 +170,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           }));
           markersPluginRef.current.setMarkers(chartMarkers);
 
-          if (onStrategyUpdate) {
-            onStrategyUpdate(summary);
+          if (onStrategyUpdateRef.current) {
+            onStrategyUpdateRef.current(summary);
           }
         } catch (e) {
           console.warn('Live strategy evaluation error:', e);
@@ -171,8 +182,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         } catch {
           // ignore
         }
-        if (onStrategyUpdate) {
-          onStrategyUpdate({
+        if (onStrategyUpdateRef.current) {
+          onStrategyUpdateRef.current({
             name: 'Custom 3-Candle Buy Strategy',
             description: '',
             currentTrend: 'NEUTRAL',
@@ -186,11 +197,11 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           });
         }
       }
-    }, [indicators.strategy, tradingSymbol, onStrategyUpdate]);
+    }, [tradingSymbol]);
 
     const triggerLiveStrategyEvaluation = useCallback(() => {
       const now = Date.now();
-      if (now - lastStrategyRunTimeRef.current > 200) {
+      if (now - lastStrategyRunTimeRef.current > 1500) {
         lastStrategyRunTimeRef.current = now;
         runLiveStrategy();
       } else if (!strategyPendingTimerRef.current) {
@@ -198,7 +209,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           strategyPendingTimerRef.current = null;
           lastStrategyRunTimeRef.current = Date.now();
           runLiveStrategy();
-        }, 200);
+        }, 1500);
       }
     }, [runLiveStrategy]);
 
@@ -651,81 +662,88 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
         const activeBar = list[list.length - 1];
 
-        // 3. Live Dynamic EMAs Update on Canvas
-        const emaConfigs = [
-          { key: 'ema8', period: 8 },
-          { key: 'ema16', period: 16 },
-          { key: 'ema20', period: 20 },
-          { key: 'ema50', period: 50 },
-          { key: 'ema200', period: 200 },
-        ];
-        emaConfigs.forEach(({ key, period }) => {
-          const series = emaSeriesRefs.current.get(key);
-          if (series && indicators[key as keyof IndicatorConfig]) {
-            const emaPoints = calculateEMA(list, period);
-            if (emaPoints.length > 0) {
-              const curEma = emaPoints[emaPoints.length - 1].value;
+        // 3. Throttle indicators & HUD snapshot (run immediately on new bar, otherwise throttle to 600ms)
+        const now = Date.now();
+        if (isNewBar || now - lastIndicatorCalcTimeRef.current > 600) {
+          lastIndicatorCalcTimeRef.current = now;
+          const currentIndicators = indicatorsRef.current;
+
+          // Dynamic EMAs Update on Canvas
+          const emaConfigs = [
+            { key: 'ema8', period: 8 },
+            { key: 'ema16', period: 16 },
+            { key: 'ema20', period: 20 },
+            { key: 'ema50', period: 50 },
+            { key: 'ema200', period: 200 },
+          ];
+          emaConfigs.forEach(({ key, period }) => {
+            const series = emaSeriesRefs.current.get(key);
+            if (series && currentIndicators[key as keyof IndicatorConfig]) {
+              const emaPoints = calculateEMA(list, period);
+              if (emaPoints.length > 0) {
+                const curEma = emaPoints[emaPoints.length - 1].value;
+                try {
+                  series.update({
+                    time: activeBar.time as unknown as Time,
+                    value: curEma,
+                  });
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          });
+
+          // Dynamic RSI Update on Canvas
+          if (rsiSeriesRef.current && currentIndicators.rsi14) {
+            const rsiPoints = calculateRSI(list, 14);
+            if (rsiPoints.length > 0) {
+              const curRsi = rsiPoints[rsiPoints.length - 1].value;
               try {
-                series.update({
+                rsiSeriesRef.current.update({
                   time: activeBar.time as unknown as Time,
-                  value: curEma,
+                  value: curRsi,
                 });
               } catch {
                 // ignore
               }
             }
           }
-        });
 
-        // 4. Live Dynamic RSI Update on Canvas
-        if (rsiSeriesRef.current && indicators.rsi14) {
-          const rsiPoints = calculateRSI(list, 14);
-          if (rsiPoints.length > 0) {
-            const curRsi = rsiPoints[rsiPoints.length - 1].value;
-            try {
-              rsiSeriesRef.current.update({
-                time: activeBar.time as unknown as Time,
-                value: curRsi,
-              });
-            } catch {
-              // ignore
+          // Dynamic VWAP Update on Canvas
+          if (vwapSeriesRef.current && currentIndicators.vwap) {
+            const vwapPoints = calculateVWAP(list);
+            if (vwapPoints.length > 0) {
+              const curVwap = vwapPoints[vwapPoints.length - 1].value;
+              try {
+                vwapSeriesRef.current.update({
+                  time: activeBar.time as unknown as Time,
+                  value: curVwap,
+                });
+              } catch {
+                // ignore
+              }
             }
           }
-        }
 
-        // 5. Live Dynamic VWAP Update on Canvas
-        if (vwapSeriesRef.current && indicators.vwap) {
-          const vwapPoints = calculateVWAP(list);
-          if (vwapPoints.length > 0) {
-            const curVwap = vwapPoints[vwapPoints.length - 1].value;
-            try {
-              vwapSeriesRef.current.update({
-                time: activeBar.time as unknown as Time,
-                value: curVwap,
-              });
-            } catch {
-              // ignore
-            }
-          }
-        }
+          // Update Live Indicators HUD state
+          const currentSnapshot = computeLiveIndicatorsSnapshot(list);
+          setLiveIndicators(currentSnapshot);
+          candleIndicatorsMap.current.set(activeBar.time, currentSnapshot);
 
-        // 6. Update Live Indicators HUD state for instant 60fps display
-        const currentSnapshot = computeLiveIndicatorsSnapshot(list);
-        setLiveIndicators(currentSnapshot);
-        candleIndicatorsMap.current.set(activeBar.time, currentSnapshot);
+          // Live Strategy Evaluation (throttled to 1.5s)
+          triggerLiveStrategyEvaluation();
+        }
 
         setCurrentLivePrice(newPrice);
         setTickDirection(direction);
 
-        if (onLivePriceUpdate && list[0]) {
+        if (onLivePriceUpdateRef.current && list[0]) {
           const first = list[0];
           const change = newPrice - first.open;
           const changePercent = first.open > 0 ? (change / first.open) * 100 : 0;
-          onLivePriceUpdate(newPrice, change, changePercent, direction);
+          onLivePriceUpdateRef.current(newPrice, change, changePercent, direction);
         }
-
-        // 7. Live Strategy Evaluation on SSE live tick
-        triggerLiveStrategyEvaluation();
       });
 
       return () => {
@@ -733,9 +751,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       };
     }, [
       instrumentKey,
-      indicators,
       timeframe,
-      onLivePriceUpdate,
       triggerLiveStrategyEvaluation,
     ]);
 
@@ -922,7 +938,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              UPSTOX LIVE (200ms)
+              UPSTOX LIVE (1s)
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[10px] font-sans font-bold text-emerald-400 mr-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/40">
@@ -930,7 +946,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              LIVE MARKET (200ms)
+              LIVE MARKET (1s)
             </span>
           )}
 

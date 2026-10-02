@@ -34,10 +34,16 @@ const NSE_HOLIDAYS_2026: Set<string> = new Set([
   '2026-12-25', // Christmas
 ]);
 
+let cachedStatus: { time: number; status: MarketStatus } | null = null;
+
 /**
  * Returns the current market status based on real Indian Standard Time (IST).
  */
 export function getIndianMarketStatus(date = new Date()): MarketStatus {
+  const now = date.getTime();
+  if (cachedStatus && now - cachedStatus.time < 5000) {
+    return cachedStatus.status;
+  }
   // Convert current time to IST string
   const istFormatter = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -68,56 +74,57 @@ export function getIndianMarketStatus(date = new Date()): MarketStatus {
   );
   const dayOfWeek = istDate.getDay(); // 0 = Sun, 6 = Sat
 
+  let resultStatus: MarketStatus;
+
   if (dayOfWeek === 0 || dayOfWeek === 6) {
-    return {
+    resultStatus = {
       isOpen: false,
       session: 'CLOSED',
       exchange: 'NSE/BSE',
       reason: 'Weekend (Saturday/Sunday)',
       timeIST: timeStr,
     };
-  }
-
-  if (NSE_HOLIDAYS_2026.has(dateStr)) {
-    return {
+  } else if (NSE_HOLIDAYS_2026.has(dateStr)) {
+    resultStatus = {
       isOpen: false,
       session: 'CLOSED',
       exchange: 'NSE/BSE',
       reason: 'Exchange Holiday (Gandhi Jayanti / National Holiday)',
       timeIST: timeStr,
     };
+  } else {
+    const minutesFromMidnight = hour * 60 + minute;
+    const marketOpenMinutes = 9 * 60 + 15; // 09:15 IST
+    const marketCloseMinutes = 15 * 60 + 30; // 15:30 IST
+    const preMarketOpenMinutes = 9 * 60; // 09:00 IST
+
+    if (minutesFromMidnight >= marketOpenMinutes && minutesFromMidnight < marketCloseMinutes) {
+      resultStatus = {
+        isOpen: true,
+        session: 'OPEN',
+        exchange: 'NSE/BSE',
+        reason: 'Regular Trading Hours (09:15 - 15:30 IST)',
+        timeIST: timeStr,
+      };
+    } else if (minutesFromMidnight >= preMarketOpenMinutes && minutesFromMidnight < marketOpenMinutes) {
+      resultStatus = {
+        isOpen: false,
+        session: 'PRE_MARKET',
+        exchange: 'NSE/BSE',
+        reason: 'Pre-Market Session (09:00 - 09:15 IST)',
+        timeIST: timeStr,
+      };
+    } else {
+      resultStatus = {
+        isOpen: false,
+        session: 'CLOSED',
+        exchange: 'NSE/BSE',
+        reason: 'Market Closed (Trading hours: Mon-Fri 09:15 - 15:30 IST)',
+        timeIST: timeStr,
+      };
+    }
   }
 
-  const minutesFromMidnight = hour * 60 + minute;
-  const marketOpenMinutes = 9 * 60 + 15; // 09:15 IST
-  const marketCloseMinutes = 15 * 60 + 30; // 15:30 IST
-  const preMarketOpenMinutes = 9 * 60; // 09:00 IST
-
-  if (minutesFromMidnight >= marketOpenMinutes && minutesFromMidnight < marketCloseMinutes) {
-    return {
-      isOpen: true,
-      session: 'OPEN',
-      exchange: 'NSE/BSE',
-      reason: 'Regular Trading Hours (09:15 - 15:30 IST)',
-      timeIST: timeStr,
-    };
-  }
-
-  if (minutesFromMidnight >= preMarketOpenMinutes && minutesFromMidnight < marketOpenMinutes) {
-    return {
-      isOpen: false,
-      session: 'PRE_MARKET',
-      exchange: 'NSE/BSE',
-      reason: 'Pre-Market Session (09:00 - 09:15 IST)',
-      timeIST: timeStr,
-    };
-  }
-
-  return {
-    isOpen: false,
-    session: 'CLOSED',
-    exchange: 'NSE/BSE',
-    reason: 'Market Closed (Trading hours: Mon-Fri 09:15 - 15:30 IST)',
-    timeIST: timeStr,
-  };
+  cachedStatus = { time: now, status: resultStatus };
+  return resultStatus;
 }
