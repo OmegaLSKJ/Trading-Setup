@@ -13,25 +13,56 @@ import {
   LineStyle,
   Time,
 } from 'lightweight-charts';
-import { Candle, IndicatorConfig } from '@/lib/types';
+import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
 import { calculateEMA, calculateVWAP } from '@/lib/indicators';
 import { chartSyncBus } from '@/lib/chart-sync';
+import { liveStreamManager, LiveTick } from '@/lib/live-stream';
 import { useDashboardStore } from '@/store/dashboard-store';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
+  applyTick: (tick: LiveTick) => void;
 }
 
 interface Props {
   chartId: string;
+  instrumentKey: string;
+  timeframe: Timeframe;
   candles: Candle[];
   indicators: IndicatorConfig;
   isLoading?: boolean;
   onCrosshairMove?: (candle: Candle | null) => void;
+  onLivePriceUpdate?: (price: number, change: number, changePercent: number, direction: 'UP' | 'DOWN' | 'EQUAL') => void;
+}
+
+function getTimeframeSeconds(tf: Timeframe): number {
+  switch (tf) {
+    case '1m': return 60;
+    case '3m': return 180;
+    case '5m': return 300;
+    case '10m': return 600;
+    case '15m': return 900;
+    case '30m': return 1800;
+    case '1h': return 3600;
+    case '1D': return 86400;
+    default: return 300;
+  }
 }
 
 export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
-  ({ chartId, candles, indicators, isLoading, onCrosshairMove }, ref) => {
+  (
+    {
+      chartId,
+      instrumentKey,
+      timeframe,
+      candles,
+      indicators,
+      isLoading,
+      onCrosshairMove,
+      onLivePriceUpdate,
+    },
+    ref
+  ) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartApiRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -39,6 +70,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const emaSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
+    const activeCandlesRef = useRef<Candle[]>([]);
     const isSyncingRange = useRef(false);
     const { syncSettings } = useDashboardStore();
 
@@ -51,13 +83,90 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       timeStr?: string;
     } | null>(null);
 
+    // Keep active candles in ref for live tick updates
+    useEffect(() => {
+      activeCandlesRef.current = [...candles];
+    }, [candles]);
+
+    // Apply Live Tick function
+    const applyTick = (tick: LiveTick) => {
+      if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+      const currentCandles = activeCandlesRef.current;
+      if (currentCandles.length === 0) return;
+
+      const lastCandle = currentCandles[currentCandles.length - 1];
+      const intervalSec = getTimeframeSeconds(timeframe);
+
+      let targetCandle: Candle;
+      const isWithinCurrentCandle = tick.timestamp < lastCandle.time + intervalSec;
+
+      if (isWithinCurrentCandle) {
+        lastCandle.high = Math.max(lastCandle.high, tick.price);
+        lastCandle.low = Math.min(lastCandle.low, tick.price);
+        lastCandle.close = tick.price;
+        lastCandle.volume = (lastCandle.volume || 0) + tick.volumeDelta;
+        targetCandle = lastCandle;
+      } else {
+        // Start a new candle
+        const newTime = Math.floor(tick.timestamp / intervalSec) * intervalSec;
+        targetCandle = {
+          time: newTime,
+          timeString: new Date(newTime * 1000).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+          }),
+          open: tick.price,
+          high: tick.price,
+          low: tick.price,
+          close: tick.price,
+          volume: tick.volumeDelta,
+        };
+        currentCandles.push(targetCandle);
+      }
+
+      // Update series in place with zero latency
+      candleSeriesRef.current.update({
+        time: targetCandle.time as unknown as Time,
+        open: targetCandle.open,
+        high: targetCandle.high,
+        low: targetCandle.low,
+        close: targetCandle.close,
+      });
+
+      if (indicators.volume) {
+        const isUp = targetCandle.close >= targetCandle.open;
+        volumeSeriesRef.current.update({
+          time: targetCandle.time as unknown as Time,
+          value: targetCandle.volume,
+          color: isUp ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
+        });
+      }
+
+      // Notify parent panel of price update
+      if (onLivePriceUpdate && currentCandles[0]) {
+        const first = currentCandles[0];
+        const change = targetCandle.close - first.open;
+        const changePercent = first.open > 0 ? (change / first.open) * 100 : 0;
+        onLivePriceUpdate(targetCandle.close, change, changePercent, tick.direction);
+      }
+    };
+
     useImperativeHandle(ref, () => ({
       resetScale: () => {
         if (chartApiRef.current) {
           chartApiRef.current.timeScale().fitContent();
         }
       },
+      applyTick,
     }));
+
+    // Subscribe to live stream for this instrument
+    useEffect(() => {
+      if (!instrumentKey) return;
+      const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
+        applyTick(tick);
+      });
+      return () => unsubscribe();
+    }, [instrumentKey, timeframe, indicators.volume]);
 
     // Initialize chart
     useEffect(() => {
@@ -339,7 +448,11 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       }
     }, [candles, indicators]);
 
-    const latestCandle = candles && candles.length > 0 ? candles[candles.length - 1] : null;
+    const latestCandle =
+      activeCandlesRef.current.length > 0
+        ? activeCandlesRef.current[activeCandlesRef.current.length - 1]
+        : null;
+
     const currentPriceInfo = hoverData || (latestCandle ? {
       open: latestCandle.open,
       high: latestCandle.high,
@@ -351,8 +464,17 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     return (
       <div className="relative w-full h-full flex flex-col bg-[#090d16] select-none overflow-hidden">
-        {/* Top-left OHLCV HUD Overlay */}
-        <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/85 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-md">
+        {/* Top-left OHLCV HUD Overlay with LIVE pulsating indicator */}
+        <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f172a]/90 backdrop-blur-xs px-2.5 py-1 rounded border border-slate-800 text-[11px] font-mono pointer-events-none text-slate-300 shadow-md">
+          {/* Live pulsing dot */}
+          <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-sans font-bold mr-1">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            LIVE
+          </span>
+
           {currentPriceInfo ? (
             <>
               {currentPriceInfo.timeStr && (
@@ -396,7 +518,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
               )}
             </>
           ) : (
-            <span className="text-slate-500">Waiting for market data...</span>
+            <span className="text-slate-500">Connecting market feed...</span>
           )}
         </div>
 
@@ -417,7 +539,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
               No Candle Data Available
             </div>
             <div className="text-xs text-slate-500 max-w-xs">
-              Upstox returned no candles for this range or the market was closed. Try adjusting the date range or timeframe.
+              Upstox returned no candles for this range. Try adjusting the date range or timeframe.
             </div>
           </div>
         )}

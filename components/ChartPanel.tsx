@@ -46,6 +46,12 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [isIndicatorsMenuOpen, setIsIndicatorsMenuOpen] = useState(false);
   const [isDateMenuOpen, setIsDateMenuOpen] = useState(false);
 
+  // Real-time live price states with flashing effects
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [liveChange, setLiveChange] = useState<number>(0);
+  const [liveChangePercent, setLiveChangePercent] = useState<number>(0);
+  const [tickFlash, setTickFlash] = useState<'UP' | 'DOWN' | null>(null);
+
   const {
     activeChartId,
     setActiveChartId,
@@ -83,7 +89,17 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
         throw new Error(data.error || 'Failed to fetch Upstox candles');
       }
 
-      setCandles(data.candles || []);
+      const fetchedCandles = data.candles || [];
+      setCandles(fetchedCandles);
+
+      if (fetchedCandles.length > 0) {
+        const last = fetchedCandles[fetchedCandles.length - 1];
+        const first = fetchedCandles[0];
+        setLivePrice(last.close);
+        const change = last.close - first.open;
+        setLiveChange(change);
+        setLiveChangePercent(first.open > 0 ? (change / first.open) * 100 : 0);
+      }
     } catch (err: any) {
       console.warn(`Chart panel error [${panel.instrument.trading_symbol}]:`, err.message);
       setErrorMessage(err.message || 'Error fetching Upstox data');
@@ -108,16 +124,24 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
     return () => clearInterval(intervalId);
   }, [autoRefreshInterval, loadCandles]);
 
-  // Calculate price change stats from candles
-  const latestCandle = candles[candles.length - 1];
-  const firstCandle = candles[0];
-  const priceChange =
-    latestCandle && firstCandle ? latestCandle.close - firstCandle.open : 0;
-  const priceChangePercent =
-    firstCandle && firstCandle.open > 0
-      ? (priceChange / firstCandle.open) * 100
-      : 0;
-  const isPositive = priceChange >= 0;
+  // Callback when a real-time micro-tick arrives from the live stream
+  const handleLivePriceUpdate = (
+    price: number,
+    change: number,
+    changePercent: number,
+    direction: 'UP' | 'DOWN' | 'EQUAL'
+  ) => {
+    setLivePrice(price);
+    setLiveChange(change);
+    setLiveChangePercent(changePercent);
+
+    if (direction === 'UP' || direction === 'DOWN') {
+      setTickFlash(direction);
+      setTimeout(() => setTickFlash(null), 180);
+    }
+  };
+
+  const isPositive = liveChange >= 0;
 
   return (
     <div
@@ -150,19 +174,26 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             {panel.instrument.exchange}
           </span>
 
-          {latestCandle && (
-            <div className="flex items-center gap-1.5 font-mono text-[11px] whitespace-nowrap">
-              <span className="text-white font-bold">
-                ₹{latestCandle.close.toFixed(2)}
-              </span>
+          {/* Live Price with flashing tick effect */}
+          {livePrice !== null && (
+            <div
+              className={`flex items-center gap-1.5 font-mono text-[11px] whitespace-nowrap px-1.5 py-0.5 rounded transition-colors duration-150 ${
+                tickFlash === 'UP'
+                  ? 'bg-emerald-900/60 text-emerald-300'
+                  : tickFlash === 'DOWN'
+                  ? 'bg-rose-900/60 text-rose-300'
+                  : ''
+              }`}
+            >
+              <span className="text-white font-bold">₹{livePrice.toFixed(2)}</span>
               <span
                 className={`text-[10px] font-medium ${
                   isPositive ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
                 {isPositive ? '+' : ''}
-                {priceChange.toFixed(2)} ({isPositive ? '+' : ''}
-                {priceChangePercent.toFixed(2)}%)
+                {liveChange.toFixed(2)} ({isPositive ? '+' : ''}
+                {liveChangePercent.toFixed(2)}%)
               </span>
             </div>
           )}
@@ -370,9 +401,12 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
         <CandlestickChart
           ref={chartRef}
           chartId={panel.id}
+          instrumentKey={panel.instrument.instrument_key}
+          timeframe={panel.timeframe}
           candles={candles}
           indicators={panel.indicators}
           isLoading={isLoading}
+          onLivePriceUpdate={handleLivePriceUpdate}
         />
       </div>
     </div>
