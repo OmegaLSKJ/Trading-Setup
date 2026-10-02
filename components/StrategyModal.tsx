@@ -99,6 +99,83 @@ export const StrategyModal: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* Live Real-Time Telemetry Bar */}
+          {strategySummary?.telemetry && (
+            <div className="p-3.5 rounded-lg bg-[#0b1324] border border-cyan-900/60 shadow-lg">
+              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-cyan-950">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-[11px] font-bold text-white uppercase tracking-wider">
+                    Live Real-Time Market Telemetry
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+                    Sub-second Ticks Active
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-bold text-white">
+                  LTP: <span className="text-emerald-400">{strategySummary.telemetry.currencySymbol}{strategySummary.telemetry.livePrice.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px]">
+                <div className="bg-[#080d1a] p-2 rounded border border-slate-800">
+                  <div className="text-[9px] text-slate-500 uppercase">EMA 8 / 16</div>
+                  <div className="font-mono font-bold mt-0.5 text-white flex items-center justify-between">
+                    <span>{strategySummary.telemetry.ema8} / {strategySummary.telemetry.ema16}</span>
+                    <span className={`text-[9px] px-1 rounded ${strategySummary.telemetry.ema8 > strategySummary.telemetry.ema16 ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
+                      {strategySummary.telemetry.ema8 > strategySummary.telemetry.ema16 ? 'BULL' : 'BEAR'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-[#080d1a] p-2 rounded border border-slate-800">
+                  <div className="text-[9px] text-slate-500 uppercase">RSI 14</div>
+                  <div className="font-mono font-bold mt-0.5 text-cyan-300">
+                    {strategySummary.telemetry.rsi}
+                    <span className="text-[9px] text-slate-500 ml-1 font-normal">(Target: &gt;70)</span>
+                  </div>
+                </div>
+
+                <div className="bg-[#080d1a] p-2 rounded border border-slate-800">
+                  <div className="text-[9px] text-slate-500 uppercase">DPO 20</div>
+                  <div className={`font-mono font-bold mt-0.5 ${strategySummary.telemetry.dpo > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {strategySummary.telemetry.dpo > 0 ? '+' : ''}{strategySummary.telemetry.dpo}
+                    <span className="text-[9px] text-slate-500 ml-1 font-normal">(&gt;0)</span>
+                  </div>
+                </div>
+
+                <div className="bg-[#080d1a] p-2 rounded border border-slate-800">
+                  <div className="text-[9px] text-slate-500 uppercase">ADX 14</div>
+                  <div className={`font-mono font-bold mt-0.5 ${strategySummary.telemetry.adx > 20 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {strategySummary.telemetry.adx}
+                    <span className="text-[9px] text-slate-500 ml-1 font-normal">(&gt;20 Trend)</span>
+                  </div>
+                </div>
+
+                <div className="bg-[#080d1a] p-2 rounded border border-slate-800 col-span-2 md:col-span-1">
+                  <div className="text-[9px] text-slate-500 uppercase">Live Position PnL</div>
+                  <div className="font-mono font-bold mt-0.5 flex items-center justify-between">
+                    {strategySummary.telemetry.hasOpenPosition && strategySummary.telemetry.livePnLPercent !== undefined ? (
+                      <span className={strategySummary.telemetry.livePnLPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {strategySummary.telemetry.livePnLPercent >= 0 ? '+' : ''}{strategySummary.telemetry.livePnLPercent}%
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-[10px]">No Open Trade</span>
+                    )}
+                    {strategySummary.telemetry.tpDistancePercent !== undefined && (
+                      <span className="text-[9px] text-cyan-400 font-normal">
+                        ({strategySummary.telemetry.tpDistancePercent}% to TP)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Active / Latest Signal */}
           {strategySummary?.lastSignal ? (
             <div className="p-4 rounded-lg bg-emerald-950/20 border border-emerald-800/60">
@@ -112,7 +189,7 @@ export const StrategyModal: React.FC<Props> = ({
                   </span>
                 </div>
                 <div className="text-xs">
-                  Entry: <span className="text-white font-bold font-mono">₹{strategySummary.lastSignal.price.toFixed(2)}</span>
+                  Entry: <span className="text-white font-bold font-mono">{strategySummary.telemetry?.currencySymbol || '₹'}{strategySummary.lastSignal.price.toFixed(2)}</span>
                 </div>
               </div>
 

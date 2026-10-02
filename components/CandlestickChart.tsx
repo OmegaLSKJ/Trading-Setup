@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -20,6 +20,7 @@ import { calculateEMA, calculateVWAP } from '@/lib/indicators';
 import { chartSyncBus } from '@/lib/chart-sync';
 import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
+import { liveStreamManager, LiveTick } from '@/lib/live-stream';
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
@@ -71,6 +72,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const activeCandlesRef = useRef<Candle[]>([]);
     const isSyncingRange = useRef(false);
     const liveTickTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const lastStrategyRunTimeRef = useRef<number>(0);
+    const strategyPendingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const { syncSettings } = useDashboardStore();
 
@@ -85,6 +88,66 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     const [currentLivePrice, setCurrentLivePrice] = useState<number | null>(null);
     const [tickDirection, setTickDirection] = useState<'UP' | 'DOWN' | 'EQUAL'>('EQUAL');
+
+    // Dynamic Live Strategy Evaluator that recalculates signals & markers in real-time as live data ticks
+    const runLiveStrategy = useCallback(() => {
+      if (!markersPluginRef.current) return;
+      const list = activeCandlesRef.current;
+
+      if (indicators.strategy && list && list.length >= 15) {
+        try {
+          const summary = evaluateStrategy(list, tradingSymbol);
+          const chartMarkers = summary.markers.map((m) => ({
+            time: m.time as unknown as Time,
+            position: m.position,
+            color: m.color,
+            shape: m.shape,
+            text: m.text,
+            size: m.size || 2,
+          }));
+          markersPluginRef.current.setMarkers(chartMarkers);
+
+          if (onStrategyUpdate) {
+            onStrategyUpdate(summary);
+          }
+        } catch (e) {
+          console.warn('Live strategy evaluation error:', e);
+        }
+      } else {
+        try {
+          markersPluginRef.current.setMarkers([]);
+        } catch {
+          // ignore
+        }
+        if (onStrategyUpdate) {
+          onStrategyUpdate({
+            name: 'Custom 3-Candle Buy Strategy',
+            description: '',
+            currentTrend: 'NEUTRAL',
+            lastSignal: null,
+            winRate: 0,
+            totalSignals: 0,
+            profitableTrades: 0,
+            markers: [],
+            activeSignals: [],
+          });
+        }
+      }
+    }, [indicators.strategy, tradingSymbol, onStrategyUpdate]);
+
+    const triggerLiveStrategyEvaluation = useCallback(() => {
+      const now = Date.now();
+      if (now - lastStrategyRunTimeRef.current > 200) {
+        lastStrategyRunTimeRef.current = now;
+        runLiveStrategy();
+      } else if (!strategyPendingTimerRef.current) {
+        strategyPendingTimerRef.current = setTimeout(() => {
+          strategyPendingTimerRef.current = null;
+          lastStrategyRunTimeRef.current = Date.now();
+          runLiveStrategy();
+        }, 200);
+      }
+    }, [runLiveStrategy]);
 
     useImperativeHandle(ref, () => ({
       resetScale: () => {
@@ -409,6 +472,9 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const changePercent = first.open > 0 ? (change / first.open) * 100 : 0;
           onLivePriceUpdate(newPrice, change, changePercent, direction);
         }
+
+        // Live Strategy Evaluation on sub-second micro-tick
+        triggerLiveStrategyEvaluation();
       }, 150); // Fires every 150ms for live, responsive movement
 
       return () => {
@@ -417,7 +483,66 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           liveTickTimerRef.current = null;
         }
       };
-    }, [candles, instrumentKey, tradingSymbol, indicators.volume, onLivePriceUpdate]);
+    }, [candles, instrumentKey, tradingSymbol, indicators.volume, onLivePriceUpdate, triggerLiveStrategyEvaluation]);
+
+    // Real-Time Live Market Data Stream Subscription (Upstox SSE Stream)
+    useEffect(() => {
+      if (!instrumentKey) return;
+
+      const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
+        const list = activeCandlesRef.current;
+        if (!list || list.length === 0 || !candleSeriesRef.current) return;
+
+        const last = list[list.length - 1];
+        if (!last) return;
+
+        const newPrice = Number(tick.price.toFixed(2));
+        const direction = newPrice > last.close ? 'UP' : newPrice < last.close ? 'DOWN' : 'EQUAL';
+
+        last.close = newPrice;
+        if (newPrice > last.high) last.high = newPrice;
+        if (newPrice < last.low) last.low = newPrice;
+        if (tick.volumeDelta) {
+          last.volume = (last.volume || 0) + tick.volumeDelta;
+        }
+
+        candleSeriesRef.current.update({
+          time: last.time as unknown as Time,
+          open: last.open,
+          high: last.high,
+          low: last.low,
+          close: last.close,
+        });
+
+        if (volumeSeriesRef.current && indicators.volume) {
+          volumeSeriesRef.current.update({
+            time: last.time as unknown as Time,
+            value: last.volume,
+            color:
+              last.close >= last.open
+                ? 'rgba(16, 185, 129, 0.4)'
+                : 'rgba(239, 68, 68, 0.4)',
+          });
+        }
+
+        setCurrentLivePrice(newPrice);
+        setTickDirection(direction);
+
+        if (onLivePriceUpdate && list[0]) {
+          const first = list[0];
+          const change = newPrice - first.open;
+          const changePercent = first.open > 0 ? (change / first.open) * 100 : 0;
+          onLivePriceUpdate(newPrice, change, changePercent, direction);
+        }
+
+        // Live Strategy Evaluation on SSE live tick
+        triggerLiveStrategyEvaluation();
+      });
+
+      return () => {
+        unsubscribe();
+      };
+    }, [instrumentKey, indicators.volume, onLivePriceUpdate, triggerLiveStrategyEvaluation]);
 
     // Update Indicators (EMA & VWAP)
     useEffect(() => {
@@ -476,50 +601,10 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       }
     }, [candles, indicators]);
 
-    // Apply Live Strategy Mapping (BUY/SELL Arrows & Target/Stop-Loss Levels)
+    // Apply Live Strategy Mapping on initial load & candle changes
     useEffect(() => {
-      if (!markersPluginRef.current) return;
-
-      if (indicators.strategy && candles && candles.length > 0) {
-        try {
-          const summary = evaluateStrategy(candles, tradingSymbol);
-          const chartMarkers = summary.markers.map((m) => ({
-            time: m.time as unknown as Time,
-            position: m.position,
-            color: m.color,
-            shape: m.shape,
-            text: m.text,
-            size: m.size || 2,
-          }));
-          markersPluginRef.current.setMarkers(chartMarkers);
-
-          if (onStrategyUpdate) {
-            onStrategyUpdate(summary);
-          }
-        } catch (e) {
-          console.warn('Strategy marker mapping error:', e);
-        }
-      } else {
-        try {
-          markersPluginRef.current.setMarkers([]);
-        } catch {
-          // ignore
-        }
-        if (onStrategyUpdate) {
-          onStrategyUpdate({
-            name: 'Custom 3-Candle Buy Strategy',
-            description: '',
-            currentTrend: 'NEUTRAL',
-            lastSignal: null,
-            winRate: 0,
-            totalSignals: 0,
-            profitableTrades: 0,
-            markers: [],
-            activeSignals: [],
-          });
-        }
-      }
-    }, [candles, indicators.strategy, onStrategyUpdate]);
+      runLiveStrategy();
+    }, [candles, indicators.strategy, runLiveStrategy]);
 
     const activeList = activeCandlesRef.current;
     const latestCandle = activeList.length > 0 ? activeList[activeList.length - 1] : null;

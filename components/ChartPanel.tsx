@@ -203,25 +203,56 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
             </div>
           )}
 
-          {/* Strategy Live Signal Badge - Applied on all stocks */}
+          {/* Strategy Live Signal Badge - Dynamic Live Telemetry */}
           {panel.indicators.strategy && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIsStrategyModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-[10px] font-mono cursor-pointer transition-colors shadow-xs"
-              title="Custom 3-Candle Strategy: Click to inspect signals, indicator levels & rules"
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-all shadow-xs ${
+                strategySummary?.telemetry?.isTakeProfitHit
+                  ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 animate-pulse'
+                  : strategySummary?.telemetry?.hasOpenPosition
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
+              }`}
+              title="Custom 3-Candle Strategy: Click to inspect live telemetry & rules"
             >
               <Target className="w-3 h-3 text-amber-400 shrink-0" />
               <span className="text-amber-300 font-bold hidden sm:inline">3-CANDLE:</span>
-              {strategySummary?.lastSignal ? (
+              {strategySummary?.telemetry?.isTakeProfitHit ? (
+                <span className="text-cyan-400 font-bold animate-pulse">🎯 TP +2% HIT!</span>
+              ) : strategySummary?.telemetry?.hasOpenPosition && strategySummary.telemetry.openPositionEntryPrice ? (
+                <span className="flex items-center gap-1 font-bold">
+                  <span className="text-emerald-400">
+                    BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}
+                    {strategySummary.telemetry.openPositionEntryPrice.toFixed(1)}
+                  </span>
+                  <span
+                    className={`px-1 rounded text-[9px] ${
+                      (strategySummary.telemetry.livePnLPercent ?? 0) >= 0
+                        ? 'bg-emerald-950 text-emerald-300'
+                        : 'bg-rose-950 text-rose-300'
+                    }`}
+                  >
+                    {(strategySummary.telemetry.livePnLPercent ?? 0) >= 0 ? '+' : ''}
+                    {strategySummary.telemetry.livePnLPercent?.toFixed(1)}%
+                  </span>
+                  <span className="hidden md:inline text-cyan-400 font-normal">
+                    (TP: +2%)
+                  </span>
+                </span>
+              ) : strategySummary?.lastSignal ? (
                 <span className="text-emerald-400 font-bold">
-                  BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}{strategySummary.lastSignal.price.toFixed(1)}
+                  BUY @ {panel.instrument.instrument_key.includes('US|') ? '$' : '₹'}
+                  {strategySummary.lastSignal.price.toFixed(1)}
                   <span className="hidden md:inline text-cyan-300 ml-1">(TP: +2%)</span>
                 </span>
               ) : (
-                <span className="text-slate-400">SCANNING</span>
+                <span className="text-slate-400">
+                  SCANNING {strategySummary?.telemetry ? `(RSI ${strategySummary.telemetry.rsi})` : ''}
+                </span>
               )}
             </button>
           )}

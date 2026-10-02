@@ -21,6 +21,26 @@ export interface StrategySignal {
   pnlPercent?: number;
 }
 
+export interface StrategyTelemetry {
+  livePrice: number;
+  currencySymbol: string;
+  ema8: number;
+  ema16: number;
+  rsi: number;
+  dpo: number;
+  adx: number;
+  c1Passed: boolean;
+  c2Passed: boolean;
+  c3Passed: boolean;
+  hasOpenPosition: boolean;
+  openPositionEntryPrice?: number;
+  openPositionTpPrice?: number;
+  livePnLPercent?: number;
+  tpDistancePercent?: number;
+  isTakeProfitHit?: boolean;
+  isGreenHighExitHit?: boolean;
+}
+
 export interface StrategySummary {
   name: string;
   description: string;
@@ -31,6 +51,7 @@ export interface StrategySummary {
   profitableTrades: number;
   markers: StrategyMarker[];
   activeSignals: StrategySignal[];
+  telemetry?: StrategyTelemetry;
 }
 
 /**
@@ -430,6 +451,33 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
       ? Math.round((profitableTrades / totalClosedTrades) * 100)
       : 76;
 
+  // Active Live Bar Telemetry
+  const lastIndex = n - 1;
+  const livePrice = closes[lastIndex];
+  const lastPos = openPositions.length > 0 ? openPositions[openPositions.length - 1] : null;
+  const livePnLPercent = lastPos ? ((livePrice - lastPos.entryPrice) / lastPos.entryPrice) * 100 : undefined;
+  const tpDistancePercent = lastPos ? ((lastPos.tp - livePrice) / livePrice) * 100 : undefined;
+
+  const telemetry: StrategyTelemetry = {
+    livePrice,
+    currencySymbol,
+    ema8: Number((ema8[lastIndex] || 0).toFixed(2)),
+    ema16: Number((ema16[lastIndex] || 0).toFixed(2)),
+    rsi: Number((rsi[lastIndex] || 50).toFixed(1)),
+    dpo: Number((dpo[lastIndex] || 0).toFixed(2)),
+    adx: Number((adx[lastIndex] || 0).toFixed(1)),
+    c1Passed: (ema8[lastIndex - 2] > ema16[lastIndex - 2]) && (rsi[lastIndex - 2] < 70) && (dpo[lastIndex - 2] > -2.5),
+    c2Passed: (rsi[lastIndex - 1] > 65 && rsi[lastIndex - 1] < 82) && (dpo[lastIndex - 1] > 0) && (adx[lastIndex - 1] > 20),
+    c3Passed: (dpo[lastIndex] > 0) && (adx[lastIndex] > 20) && (rsi[lastIndex] > 70),
+    hasOpenPosition: openPositions.length > 0,
+    openPositionEntryPrice: lastPos?.entryPrice,
+    openPositionTpPrice: lastPos?.tp,
+    livePnLPercent: livePnLPercent !== undefined ? Number(livePnLPercent.toFixed(2)) : undefined,
+    tpDistancePercent: tpDistancePercent !== undefined ? Number(tpDistancePercent.toFixed(2)) : undefined,
+    isTakeProfitHit: lastPos ? highs[lastIndex] >= lastPos.tp : false,
+    isGreenHighExitHit: lastPos ? closes[lastIndex] > opens[lastIndex] && highs[lastIndex] > prevHighest : false,
+  };
+
   return {
     name: strategyName,
     description,
@@ -440,5 +488,6 @@ export function evaluateStrategy(candles: Candle[], symbol?: string): StrategySu
     profitableTrades,
     markers,
     activeSignals: signals,
+    telemetry,
   };
 }
