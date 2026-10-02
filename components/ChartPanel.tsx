@@ -20,7 +20,9 @@ import {
   ChevronDown,
   RotateCcw,
   Search,
+  Target,
 } from 'lucide-react';
+import { StrategySummary } from '@/lib/strategy';
 
 interface Props {
   panel: ChartPanelState;
@@ -51,6 +53,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [liveChange, setLiveChange] = useState<number>(0);
   const [liveChangePercent, setLiveChangePercent] = useState<number>(0);
   const [tickFlash, setTickFlash] = useState<'UP' | 'DOWN' | null>(null);
+  const [strategySummary, setStrategySummary] = useState<StrategySummary | null>(null);
 
   const {
     activeChartId,
@@ -197,6 +200,28 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
               </span>
             </div>
           )}
+
+          {/* Strategy Live Signal Badge */}
+          {panel.indicators.strategy && strategySummary?.lastSignal && (
+            <div className="hidden xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[10px] font-mono">
+              <span className="text-amber-400 font-bold flex items-center gap-1">
+                <Target className="w-3 h-3" />
+                STRATEGY:
+              </span>
+              <span
+                className={`font-bold ${
+                  strategySummary.lastSignal.type === 'BUY'
+                    ? 'text-emerald-400'
+                    : 'text-rose-400'
+                }`}
+              >
+                {strategySummary.lastSignal.type} @ ₹{strategySummary.lastSignal.price.toFixed(1)}
+              </span>
+              <span className="text-slate-400">TP: ₹{strategySummary.lastSignal.targetPrice.toFixed(1)}</span>
+              <span className="text-slate-400">SL: ₹{strategySummary.lastSignal.stopLossPrice.toFixed(1)}</span>
+              <span className="text-cyan-400 font-semibold">({strategySummary.winRate}% Win)</span>
+            </div>
+          )}
         </div>
 
         {/* Timeframe Quick Selector */}
@@ -221,6 +246,22 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
         {/* Right Toolbar Actions */}
         <div className="flex items-center gap-1">
+          {/* Strategy Quick Toggle Button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleChartIndicator(panel.id, 'strategy');
+            }}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+              panel.indicators.strategy
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold'
+                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Toggle Live Strategy Mapping (BUY/SELL Signals & Levels)"
+          >
+            <Target className="w-3 h-3 text-amber-400" />
+            <span className="hidden sm:inline">Strategy</span>
+          </button>
           {/* Date range picker dropdown */}
           <div className="relative">
             <button
@@ -301,6 +342,19 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                     />
                   </label>
                 ))}
+
+                <div className="px-3 py-1 font-semibold text-[10px] text-amber-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
+                  Strategy Mapping
+                </div>
+                <label className="flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 cursor-pointer">
+                  <span className="text-amber-300 font-medium">BUY/SELL Signals</span>
+                  <input
+                    type="checkbox"
+                    checked={panel.indicators.strategy}
+                    onChange={() => toggleChartIndicator(panel.id, 'strategy')}
+                    className="rounded accent-amber-500 cursor-pointer"
+                  />
+                </label>
 
                 <div className="px-3 py-1 font-semibold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-700/60 mt-1">
                   Overlays & Volume
@@ -408,6 +462,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           indicators={panel.indicators}
           isLoading={isLoading}
           onLivePriceUpdate={handleLivePriceUpdate}
+          onStrategyUpdate={setStrategySummary}
         />
       </div>
     </div>

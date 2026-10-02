@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
+  createSeriesMarkers,
   IChartApi,
   ISeriesApi,
   CrosshairMode,
@@ -17,6 +18,7 @@ import {
 import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
 import { calculateEMA, calculateVWAP } from '@/lib/indicators';
 import { chartSyncBus } from '@/lib/chart-sync';
+import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 
 export interface CandlestickChartHandle {
@@ -38,6 +40,7 @@ interface Props {
     changePercent: number,
     direction: 'UP' | 'DOWN' | 'EQUAL'
   ) => void;
+  onStrategyUpdate?: (summary: StrategySummary) => void;
 }
 
 export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
@@ -52,6 +55,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       isLoading,
       onCrosshairMove,
       onLivePriceUpdate,
+      onStrategyUpdate,
     },
     ref
   ) => {
@@ -61,6 +65,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const emaSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const markersPluginRef = useRef<any>(null);
 
     // Active mutable candles in memory for real-time live ticking
     const activeCandlesRef = useRef<Candle[]>([]);
@@ -159,6 +164,12 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         priceLineSource: PriceLineSource.LastBar,
       });
       candleSeriesRef.current = candleSeries;
+
+      try {
+        markersPluginRef.current = createSeriesMarkers(candleSeries, []);
+      } catch (e) {
+        console.warn('Could not initialize markers plugin:', e);
+      }
 
       // Volume series
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -464,6 +475,47 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         vwapSeriesRef.current = null;
       }
     }, [candles, indicators]);
+
+    // Apply Live Strategy Mapping (BUY/SELL Arrows & Target/Stop-Loss Levels)
+    useEffect(() => {
+      if (!markersPluginRef.current) return;
+
+      if (indicators.strategy && candles && candles.length > 0) {
+        try {
+          const summary = evaluateStrategy(candles);
+          const chartMarkers = summary.markers.map((m) => ({
+            time: m.time as unknown as Time,
+            position: m.position,
+            color: m.color,
+            shape: m.shape,
+            text: m.text,
+            size: m.size || 2,
+          }));
+          markersPluginRef.current.setMarkers(chartMarkers);
+
+          if (onStrategyUpdate) {
+            onStrategyUpdate(summary);
+          }
+        } catch (e) {
+          console.warn('Strategy marker mapping error:', e);
+        }
+      } else {
+        try {
+          markersPluginRef.current.setMarkers([]);
+        } catch {
+          // ignore
+        }
+        if (onStrategyUpdate) {
+          onStrategyUpdate({
+            currentTrend: 'NEUTRAL',
+            lastSignal: null,
+            winRate: 0,
+            totalSignals: 0,
+            markers: [],
+          });
+        }
+      }
+    }, [candles, indicators.strategy, onStrategyUpdate]);
 
     const activeList = activeCandlesRef.current;
     const latestCandle = activeList.length > 0 ? activeList[activeList.length - 1] : null;

@@ -15,12 +15,13 @@ import {
 const DEFAULT_INDICATORS: IndicatorConfig = {
   ema8: false,
   ema16: false,
-  ema20: false,
-  ema50: false,
+  ema20: true,
+  ema50: true,
   ema200: false,
   rsi14: false,
-  vwap: false,
+  vwap: true,
   volume: true,
+  strategy: true,
 };
 
 const DEFAULT_INSTRUMENTS: Instrument[] = [

@@ -60,6 +60,7 @@ export interface IndicatorConfig {
   rsi14: boolean;
   vwap: boolean;
   volume: boolean;
+  strategy: boolean;
 }
 
 export interface ChartPanelState {
