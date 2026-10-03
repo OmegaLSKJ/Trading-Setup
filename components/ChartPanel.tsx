@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { StrategySummary } from '@/lib/strategy';
 import { StrategyModal } from './StrategyModal';
-import { getIndianMarketStatus } from '@/lib/market-hours';
+import { getMarketStatusForInstrument } from '@/lib/market-hours';
 
 interface Props {
   panel: ChartPanelState;
@@ -315,19 +315,25 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
           {/* Market Status (Live or Closed) */}
           {(() => {
-            const isUsStock = panel.instrument.instrument_key.startsWith('US|');
-            const indianStatus = getIndianMarketStatus();
-            const isOpen = isUsStock || indianStatus.isOpen;
+            const status = getMarketStatusForInstrument(panel.instrument);
             return (
               <span
                 className={`text-[8.5px] uppercase font-mono px-1 py-0.2 rounded font-semibold shrink-0 hidden sm:inline ${
-                  isOpen
+                  status.isOpen
                     ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40'
+                    : status.session === 'PRE_MARKET' || status.session === 'POST_MARKET'
+                    ? 'bg-amber-950/80 text-amber-300 border border-amber-800/40'
                     : 'bg-rose-950/80 text-rose-400 border border-rose-800/40'
                 }`}
-                title={isOpen ? 'Market is currently open' : `Market is closed (${indianStatus.reason})`}
+                title={`${status.exchange}: ${status.session} (${status.reason}) • ${status.timeDisplay || status.timeIST}`}
               >
-                {isOpen ? 'OPEN' : 'CLOSED'}
+                {status.session === 'PRE_MARKET'
+                  ? 'PRE-MKT'
+                  : status.session === 'POST_MARKET'
+                  ? 'AFTER-HRS'
+                  : status.isOpen
+                  ? 'OPEN'
+                  : 'CLOSED'}
               </span>
             );
           })()}

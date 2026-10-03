@@ -3,7 +3,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { LayoutGridMode, Timeframe } from '@/lib/types';
-import { getIndianMarketStatus } from '@/lib/market-hours';
+import {
+  getMarketStatusForInstrument,
+  getIndianMarketStatus,
+  getUSMarketStatus,
+  getMCXMarketStatus,
+} from '@/lib/market-hours';
 import {
   Activity,
   BarChart2,
@@ -33,6 +38,7 @@ const GLOBAL_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '1h', '1D'];
 export const TopBar: React.FC = () => {
   // Selector-based subscriptions to prevent unnecessary re-renders
   const charts = useDashboardStore((s) => s.charts);
+  const activeChartId = useDashboardStore((s) => s.activeChartId);
   const layoutMode = useDashboardStore((s) => s.layoutMode);
   const setLayoutMode = useDashboardStore((s) => s.setLayoutMode);
   const setGlobalTimeframe = useDashboardStore((s) => s.setGlobalTimeframe);
@@ -48,15 +54,40 @@ export const TopBar: React.FC = () => {
   const selectedTimezone = useDashboardStore((s) => s.selectedTimezone);
   const setTimezone = useDashboardStore((s) => s.setTimezone);
 
+  const activeChart = charts.find((c) => c.id === activeChartId) || charts[0];
+  const activeInstrument = activeChart?.instrument;
+
   const isStrategyActive = charts.some((c) => c.indicators.strategy);
 
   const [isLayoutDropdownOpen, setIsLayoutDropdownOpen] = useState(false);
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
   const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false);
+  const [isMarketMenuOpen, setIsMarketMenuOpen] = useState(false);
+  const [currentDate, setCurrentDate] = useState(() => new Date());
 
   const isCheckingHealthRef = useRef(false);
 
   const currentTimezoneOpt = getTimezoneOption(selectedTimezone || 'Asia/Kolkata');
+
+  // Periodic heartbeat timer to ensure market hours and badges update dynamically
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Global click outside listener to close dropdowns smoothly
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setIsLayoutDropdownOpen(false);
+      setIsStatusPopoverOpen(false);
+      setIsTimezoneDropdownOpen(false);
+      setIsMarketMenuOpen(false);
+    };
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, []);
 
   // Poll health endpoint periodically with an in-flight guard
   useEffect(() => {
@@ -305,24 +336,195 @@ export const TopBar: React.FC = () => {
 
       {/* Right Controls: Connection Status & Settings */}
       <div className="flex items-center gap-2">
-        {/* Indian Market Official Session Badge */}
+        {/* Dynamic Market Session Badge (Reflects Active Selected Instrument) */}
         {(() => {
-          const status = getIndianMarketStatus();
+          const activeStatus = getMarketStatusForInstrument(activeInstrument, currentDate);
+          const indianStatus = getIndianMarketStatus(currentDate);
+          const usStatus = getUSMarketStatus(currentDate);
+          const mcxStatus = getMCXMarketStatus(currentDate);
+
           return (
-            <div
-              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-mono font-medium ${
-                status.isOpen
-                  ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-400'
-                  : 'bg-rose-950/80 border-rose-500/40 text-rose-300'
-              }`}
-              title={`${status.reason} • Current IST: ${status.timeIST}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${status.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-              <span>NSE/BSE: {status.isOpen ? 'OPEN' : 'CLOSED'}</span>
-              {!status.isOpen && (
-                <span className="hidden xl:inline text-slate-400 text-[10px] font-sans">
-                  ({status.reason})
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsMarketMenuOpen(!isMarketMenuOpen);
+                  setIsTimezoneDropdownOpen(false);
+                  setIsLayoutDropdownOpen(false);
+                  setIsStatusPopoverOpen(false);
+                }}
+                className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-mono font-medium transition-all cursor-pointer ${
+                  activeStatus.isOpen
+                    ? 'bg-emerald-950/80 hover:bg-emerald-900/90 border-emerald-500/40 text-emerald-400'
+                    : activeStatus.session === 'PRE_MARKET' || activeStatus.session === 'POST_MARKET'
+                    ? 'bg-amber-950/80 hover:bg-amber-900/90 border-amber-500/40 text-amber-300'
+                    : 'bg-rose-950/80 hover:bg-rose-900/90 border-rose-500/40 text-rose-300'
+                }`}
+                title={`${activeStatus.exchange} (${activeInstrument?.trading_symbol || 'Active'}): ${activeStatus.reason} • Click for all markets overview`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    activeStatus.isOpen
+                      ? 'bg-emerald-500 animate-pulse'
+                      : activeStatus.session === 'PRE_MARKET' || activeStatus.session === 'POST_MARKET'
+                      ? 'bg-amber-400 animate-pulse'
+                      : 'bg-rose-500'
+                  }`}
+                />
+                <span className="font-semibold">
+                  {activeStatus.exchange}: {activeStatus.session === 'PRE_MARKET' ? 'PRE-MKT' : activeStatus.session === 'POST_MARKET' ? 'AFTER-HRS' : activeStatus.isOpen ? 'OPEN' : 'CLOSED'}
                 </span>
+                {!activeStatus.isOpen && (
+                  <span className="hidden xl:inline text-slate-400 text-[10px] font-sans">
+                    ({activeStatus.reason})
+                  </span>
+                )}
+                <ChevronDown className="w-3 h-3 text-slate-400 opacity-70 ml-0.5" />
+              </button>
+
+              {/* Global Markets & Active Instrument Overview Popover */}
+              {isMarketMenuOpen && (
+                <div
+                  className="absolute right-0 mt-1.5 w-80 bg-[#0d1322] border border-slate-700/90 rounded-lg shadow-2xl z-50 p-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Market Trading Sessions</span>
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-sky-400 border border-slate-700">
+                      LIVE SYNC
+                    </span>
+                  </div>
+
+                  {/* Active Selected Instrument Status */}
+                  <div className="mb-2.5 p-2 rounded bg-slate-900/90 border border-slate-800">
+                    <div className="flex items-center justify-between text-[11px] font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-white font-bold">{activeInstrument?.trading_symbol || 'CHART SYMBOL'}</span>
+                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-400">
+                          {activeStatus.exchange}
+                        </span>
+                      </div>
+                      <span
+                        className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          activeStatus.isOpen
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                            : activeStatus.session === 'PRE_MARKET' || activeStatus.session === 'POST_MARKET'
+                            ? 'bg-amber-950 text-amber-300 border border-amber-800/60'
+                            : 'bg-rose-950 text-rose-300 border border-rose-800/60'
+                        }`}
+                      >
+                        {activeStatus.session === 'PRE_MARKET'
+                          ? 'PRE-MARKET'
+                          : activeStatus.session === 'POST_MARKET'
+                          ? 'AFTER-HOURS'
+                          : activeStatus.isOpen
+                          ? 'SESSION OPEN'
+                          : 'SESSION CLOSED'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                      {activeStatus.reason}
+                    </div>
+                    <div className="text-[9.5px] font-mono text-slate-500 mt-1 flex justify-between">
+                      <span>Time: {activeStatus.timeDisplay || activeStatus.timeIST}</span>
+                      <span>{activeStatus.tradingHours}</span>
+                    </div>
+                  </div>
+
+                  {/* All Major Exchanges Status Grid */}
+                  <div className="space-y-1.5 text-xs">
+                    {/* Indian Equities (NSE/BSE) */}
+                    <div className="flex items-center justify-between p-2 rounded bg-slate-900/50 border border-slate-800/60">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${indianStatus.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                          <span className="text-[11px] font-semibold text-slate-200">NSE / BSE (India)</span>
+                        </div>
+                        <div className="text-[9.5px] text-slate-400 pl-3">09:15 - 15:30 IST • Equities & F&O</div>
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-[10px] font-mono font-bold ${indianStatus.isOpen ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {indianStatus.isOpen ? 'OPEN' : 'CLOSED'}
+                        </span>
+                        <div className="text-[9px] font-mono text-slate-500">{indianStatus.timeIST}</div>
+                      </div>
+                    </div>
+
+                    {/* MCX Commodities */}
+                    <div className="flex items-center justify-between p-2 rounded bg-slate-900/50 border border-slate-800/60">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${mcxStatus.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                          <span className="text-[11px] font-semibold text-slate-200">MCX (Commodities)</span>
+                        </div>
+                        <div className="text-[9.5px] text-slate-400 pl-3">09:00 - 23:30 IST • Gold, Crude</div>
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-[10px] font-mono font-bold ${mcxStatus.isOpen ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {mcxStatus.isOpen ? 'OPEN' : 'CLOSED'}
+                        </span>
+                        <div className="text-[9px] font-mono text-slate-500">{mcxStatus.timeIST}</div>
+                      </div>
+                    </div>
+
+                    {/* US Equities (NYSE/NASDAQ) */}
+                    <div className="flex items-center justify-between p-2 rounded bg-slate-900/50 border border-slate-800/60">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              usStatus.isOpen
+                                ? 'bg-emerald-400 animate-pulse'
+                                : usStatus.session === 'PRE_MARKET' || usStatus.session === 'POST_MARKET'
+                                ? 'bg-amber-400 animate-pulse'
+                                : 'bg-rose-400'
+                            }`}
+                          />
+                          <span className="text-[11px] font-semibold text-slate-200">NYSE / NASDAQ (US)</span>
+                        </div>
+                        <div className="text-[9.5px] text-slate-400 pl-3">09:30 - 16:00 ET • Tech & S&P 500</div>
+                      </div>
+                      <div className="text-right">
+                        <span
+                          className={`text-[10px] font-mono font-bold ${
+                            usStatus.isOpen
+                              ? 'text-emerald-400'
+                              : usStatus.session === 'PRE_MARKET' || usStatus.session === 'POST_MARKET'
+                              ? 'text-amber-400'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          {usStatus.session === 'PRE_MARKET'
+                            ? 'PRE-MKT'
+                            : usStatus.session === 'POST_MARKET'
+                            ? 'AFTER-HRS'
+                            : usStatus.isOpen
+                            ? 'OPEN'
+                            : 'CLOSED'}
+                        </span>
+                        <div className="text-[9px] font-mono text-slate-500">{usStatus.timeDisplay || usStatus.timeIST}</div>
+                      </div>
+                    </div>
+
+                    {/* Crypto */}
+                    <div className="flex items-center justify-between p-2 rounded bg-slate-900/50 border border-slate-800/60">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <span className="text-[11px] font-semibold text-slate-200">Crypto / Digital Assets</span>
+                        </div>
+                        <div className="text-[9.5px] text-slate-400 pl-3">24 hours / 7 days continuous</div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400">OPEN</span>
+                        <div className="text-[9px] font-mono text-slate-500">24/7/365</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           );
