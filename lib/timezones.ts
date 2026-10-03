@@ -139,6 +139,39 @@ export function getTimezoneShortLabel(tz: string, date: Date = new Date()): stri
   return getTimezoneOption(tz).shortLabel;
 }
 
+/**
+ * Returns the DST-aware offset in seconds for a given timezone at unixSec timestamp.
+ * e.g. for America/New_York: -18000 during EST (UTC-5), -14400 during EDT (UTC-4).
+ * For Asia/Kolkata: 19800 (UTC+5:30).
+ */
+export function getTimezoneOffsetSeconds(unixSec: number, tz: string = DEFAULT_TIMEZONE): number {
+  try {
+    const validTz = isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
+    const date = new Date(unixSec * 1000);
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: validTz,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hourCycle: 'h23',
+    });
+    const parts = dtf.formatToParts(date);
+    const p: Record<string, number> = {};
+    for (const part of parts) {
+      if (part.type !== 'literal') {
+        p[part.type] = parseInt(part.value, 10);
+      }
+    }
+    const tzAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour === 24 ? 0 : p.hour, p.minute, p.second);
+    return Math.round((tzAsUtc - date.getTime()) / 1000);
+  } catch {
+    return 0;
+  }
+}
+
 export function formatDateTimeWithZone(
   unixSec: number,
   tz: string = DEFAULT_TIMEZONE,

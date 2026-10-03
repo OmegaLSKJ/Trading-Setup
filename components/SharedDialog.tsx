@@ -21,6 +21,11 @@ export const SharedDialog: React.FC<Props> = ({
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElement = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -48,7 +53,7 @@ export const SharedDialog: React.FC<Props> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -87,13 +92,13 @@ export const SharedDialog: React.FC<Props> = ({
         previouslyFocusedElement.current.focus();
       }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
     <div
-      onClick={onClose}
+      onClick={() => onCloseRef.current()}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in"
       role="presentation"
     >
@@ -105,7 +110,7 @@ export const SharedDialog: React.FC<Props> = ({
         aria-label={ariaLabel}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className={`w-full max-h-[90vh] bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col focus:outline-hidden ${className}`}
+        className={`w-full max-h-[90vh] bg-[#0f172a] border border-slate-700/80 rounded-lg shadow-2xl overflow-y-auto flex flex-col focus:outline-hidden ${className}`}
       >
         {children}
       </div>

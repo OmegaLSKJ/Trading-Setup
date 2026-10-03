@@ -70,6 +70,7 @@ export interface StrategyTelemetry {
 export interface StrategySummary {
   name: string;
   description: string;
+  currencySymbol?: string;
   currentTrend: 'BULLISH' | 'NEUTRAL';
   lastSignal: StrategySignal | null;
   winRate: number | null; // null represents N/A when totalClosedTrades === 0
@@ -95,8 +96,14 @@ export function formatISTTime(unixSec: number, timezone = DEFAULT_TIMEZONE): str
  * - Priority: Exits are evaluated before new entries on each bar.
  * - Win Rule: Strictly pnl > 0 (exitPrice > entryPrice).
  * - Break-even treatment: Trades with pnl === 0 are counted as closed trades, but not as wins.
- * - Differences from PineScript: Python/TS execution replaying closed bars; PineScript
- *   real-time intrabar broker emulator behavior may differ on order fill sequencing.
+ * - Pine Script Divergences:
+ *   1. C2 Volume Surge: Uses 20-period volume SMA alternative (volume >= SMA20 * 1.25) alongside daily highest volume.
+ *   2. Two-bar entry spacing: Enforces a minimum of 2 bars between consecutive BUY entries.
+ *   3. Max-Hold Invalidation: Positions held for >= 40 bars are closed at bar close, with global liquidation of all open positions.
+ *   4. Date Window: No artificial 365-day backtest restriction; uses all provided candle data.
+ *   5. Indicator Rounding: Rounded to 2 decimals for display consistency.
+ *   6. Per-Entry TP: Take-profit is 2% above each specific entry price, rather than average position price.
+ *   7. Daily Volume Reset: Tracks highest volume reset per trading day in exchange-local timezone.
  */
 export function evaluateStrategy(
   candles: Candle[],
@@ -104,17 +111,18 @@ export function evaluateStrategy(
   timeframe: Timeframe = '5m',
   timezone: string = DEFAULT_TIMEZONE,
   instrumentKey?: string,
-  evaluatedRange?: string
+  evaluatedRange?: string,
+  lastCandleClosed = false
 ): StrategySummary {
   const strategyName = 'Custom 3-Candle Buy Strategy — Sequential (C1=-2 C2=-1 C3=0)';
   const description =
     'Sequential 3-Candle Volume Breakout & EMA 8/16 Momentum Strategy with +2% Target and Green-High tracking exit.';
 
   const isUsSymbol =
-    symbol?.toUpperCase().includes('US|') ||
-    symbol?.startsWith('AAPL') ||
-    symbol?.startsWith('TSLA') ||
-    symbol?.startsWith('NVDA');
+    Boolean(instrumentKey?.startsWith('US|')) ||
+    Boolean(symbol?.toUpperCase().startsWith('US|')) ||
+    Boolean(instrumentKey?.includes('NASDAQ:')) ||
+    Boolean(instrumentKey?.includes('NYSE:'));
   const currencySymbol = isUsSymbol ? '$' : '₹';
 
   const timeframeWarning =
@@ -133,6 +141,7 @@ export function evaluateStrategy(
       totalSignals: 0,
       profitableTrades: 0,
       totalClosedTrades: 0,
+      currencySymbol,
       timeframeWarning,
       markers: [],
       activeSignals: [],
@@ -222,8 +231,8 @@ export function evaluateStrategy(
   let totalClosedTrades = 0;
   let lastEntryIndex = -999;
 
-  // Replay closed bars: index 0 to n-2. Forming bar is evaluated separately.
-  const closedCount = n > 1 ? n - 1 : n;
+  // Replay closed bars: if lastCandleClosed is true, all n bars are closed. Otherwise index 0 to n-2.
+  const closedCount = lastCandleClosed ? n : (n > 1 ? n - 1 : n);
 
   for (let i = 26; i < closedCount; i++) {
     // ----------------------------------------------------
@@ -337,7 +346,8 @@ export function evaluateStrategy(
       }
 
       // 3) Protective Max-Hold Invalidation Exit (40 bars)
-      if (openPositions.length > 0 && i - openPositions[0].entryIndex > 40) {
+      // When durationBars >= 40, all open positions are globally liquidated on bar close.
+      if (openPositions.length > 0 && i - openPositions[0].entryIndex >= 40) {
         const exitPrice = closes[i];
         for (const pos of openPositions) {
           totalClosedTrades++;
@@ -563,7 +573,15 @@ export function evaluateStrategy(
       adx_c3 !== undefined
     ) {
       const c1Cond = e8_c1 > e16_c1 && rsi_c1 > 70 && dpo_c1 > -2.5;
+
+      const highestVolTodayC2 = highestVolToday[c1];
+      const volSurgeC2 =
+        volumes[c2] >= highestVolTodayC2 ||
+        volumes[c2] >= highestVolToday[c2] ||
+        (avgVol20[c2] > 0 && volumes[c2] >= avgVol20[c2] * 1.25);
+
       const c2Cond =
+        volSurgeC2 &&
         rsi_c2 > 70 &&
         rsi_c2 < 80 &&
         volumes[c2] > volumes[c1] &&
@@ -571,14 +589,20 @@ export function evaluateStrategy(
         dpo_c2 > dpo_c1 &&
         adx_c2 > 22 &&
         ad[c2] > ad[c1];
+
+      const volCondC3 =
+        volumes[c3] > volumes[c1] && (volumes[c3] < volumes[c2] || volumes[c3] > volumes[c2]);
+
       const c3Cond =
-        volumes[c3] > volumes[c1] &&
+        volCondC3 &&
         dpo_c3 > dpo_c2 &&
         adx_c3 > 22 &&
         ad[c3] > ad[c2] &&
         rsi_c3 > 75;
 
-      if (c1Cond && c2Cond && c3Cond && lastIndex - lastEntryIndex >= 2) {
+      const canEnter = lastIndex - lastEntryIndex >= 2 && openPositions.length < 999;
+
+      if (c1Cond && c2Cond && c3Cond && canEnter) {
         signals.push({
           id: `PROVISIONAL_BUY_${signals.length + 1}`,
           type: 'BUY',
@@ -655,7 +679,9 @@ export function evaluateStrategy(
     tpDistancePercent: tpDistancePercent !== undefined ? Number(tpDistancePercent.toFixed(2)) : undefined,
     isTakeProfitHit: lastPos ? highs[lastIndex] >= lastPos.tp : false,
     isGreenHighExitHit:
-      lastPos ? closes[lastIndex] > opens[lastIndex] && highs[lastIndex] > prevHighest : false,
+      lastPos && trackingHighs
+        ? closes[lastIndex] > opens[lastIndex] && highs[lastIndex] > trackedHigh
+        : false,
   };
 
   return {
@@ -667,6 +693,7 @@ export function evaluateStrategy(
     totalSignals: signals.length,
     profitableTrades,
     totalClosedTrades,
+    currencySymbol,
     timeframeWarning,
     markers,
     activeSignals: signals,

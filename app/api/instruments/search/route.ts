@@ -1,9 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { instrumentService } from '@/lib/instruments';
+import { allowApiRequest } from '@/lib/api-rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  // Ingress rate limit check
+  const allowed = allowApiRequest(request, 'search', 120);
+  if (!allowed) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Rate limit exceeded. Please slow down your requests.',
+        instruments: [],
+        masterLoaded: instrumentService.isMasterLoaded(),
+        masterLoading: instrumentService.isLoadingMaster(),
+      },
+      { status: 429 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim().slice(0, 60);
   const limitStr = searchParams.get('limit') || '30';

@@ -18,6 +18,8 @@ export const SymbolSearchModal: React.FC = () => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Instrument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPending, setIsPending] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [isMasterLoading, setIsMasterLoading] = useState(false);
   const [filterSegment, setFilterSegment] = useState<'ALL' | 'EQ' | 'INDEX' | 'FO' | 'US'>('ALL');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -36,6 +38,7 @@ export const SymbolSearchModal: React.FC = () => {
     const currentSeq = ++searchSeqRef.current;
 
     setIsLoading(true);
+    setSearchError(null);
     try {
       const res = await fetch(
         `/api/instruments/search?q=${encodeURIComponent(q)}&limit=40`,
@@ -75,10 +78,12 @@ export const SymbolSearchModal: React.FC = () => {
       const isAbort = (e as { name?: string })?.name === 'AbortError';
       if (!isAbort) {
         console.error('Failed to search instruments:', e);
+        setSearchError('Search failed. Please try again.');
       }
     } finally {
       if (currentSeq === searchSeqRef.current) {
         setIsLoading(false);
+        setIsPending(false);
       }
     }
   }, []);
@@ -88,6 +93,8 @@ export const SymbolSearchModal: React.FC = () => {
     if (isSymbolSearchOpen) {
       const timer = setTimeout(() => {
         setQuery('');
+        setIsPending(false);
+        setSearchError(null);
         setSelectedIndex(0);
         inputRef.current?.focus();
         fetchResults('');
@@ -139,7 +146,6 @@ export const SymbolSearchModal: React.FC = () => {
     return () => clearInterval(pollTimer);
   }, [isSymbolSearchOpen, isMasterLoading, query, fetchResults]);
 
-
   const filteredResults = results.filter((item) => {
     if (filterSegment === 'ALL') return true;
     if (filterSegment === 'US') return item.segment?.startsWith('US_') || item.instrument_key?.startsWith('US|');
@@ -149,19 +155,24 @@ export const SymbolSearchModal: React.FC = () => {
     return true;
   });
 
+  const canSelect = !isPending && !isLoading;
+
   const handleSelectInstrument = (inst: Instrument) => {
-    if (targetChartForSearch && targetChartForSearch !== 'NEW_CHART') {
-      updateChartInstrument(targetChartForSearch, inst);
-    } else if (targetChartForSearch === 'NEW_CHART') {
-      addChart(inst);
-    } else {
-      openChartForInstrument(inst);
-    }
+    if (!canSelect) return;
     addToWatchlist(inst);
+    if (targetChartForSearch !== 'WATCHLIST_ONLY') {
+      if (targetChartForSearch && targetChartForSearch !== 'NEW_CHART') {
+        updateChartInstrument(targetChartForSearch, inst);
+      } else if (targetChartForSearch === 'NEW_CHART') {
+        addChart(inst);
+      } else {
+        openChartForInstrument(inst);
+      }
+    }
     closeSymbolSearch();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIndex((prev) => (prev + 1) % (filteredResults.length || 1));
@@ -170,7 +181,7 @@ export const SymbolSearchModal: React.FC = () => {
       setSelectedIndex((prev) => (prev - 1 + filteredResults.length) % (filteredResults.length || 1));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (filteredResults[selectedIndex]) {
+      if (canSelect && filteredResults[selectedIndex]) {
         handleSelectInstrument(filteredResults[selectedIndex]);
       }
     } else if (e.key === 'Escape') {
@@ -186,7 +197,7 @@ export const SymbolSearchModal: React.FC = () => {
       ariaLabel="Symbol Search"
       className="max-w-2xl max-h-[75vh]"
     >
-      <div onKeyDown={handleKeyDown} className="flex flex-col h-full overflow-hidden">
+      <div className="flex flex-col h-full overflow-hidden">
         {/* Search Input Bar */}
         <div className="flex items-center px-4 py-3 border-b border-slate-800 bg-[#0b0f19] gap-3 shrink-0">
           <Search className="w-5 h-5 text-emerald-400 shrink-0" />
@@ -195,11 +206,15 @@ export const SymbolSearchModal: React.FC = () => {
             type="text"
             id="symbol-search-title"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIsPending(true);
+            }}
+            onKeyDown={handleInputKeyDown}
             placeholder="Search Indian stocks (RELIANCE, NIFTY 50) or US stocks (AAPL, TSLA, NVDA)..."
             className="flex-1 bg-transparent text-white text-sm focus:outline-hidden placeholder-slate-500 font-medium"
           />
-          {isLoading && (
+          {(isLoading || isPending) && (
             <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
           )}
           <button
@@ -223,62 +238,41 @@ export const SymbolSearchModal: React.FC = () => {
         )}
 
         {/* Filter Segment Tabs */}
-        <div className="flex items-center gap-1 px-4 py-2 bg-[#090d16] border-b border-slate-800/80 text-xs shrink-0">
-          <button
-            onClick={() => setFilterSegment('ALL')}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              filterSegment === 'ALL'
-                ? 'bg-emerald-600 text-white font-medium'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-            }`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => setFilterSegment('US')}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              filterSegment === 'US'
-                ? 'bg-emerald-600 text-white font-medium'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-            }`}
-          >
-            US Stocks
-          </button>
-          <button
-            onClick={() => setFilterSegment('EQ')}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              filterSegment === 'EQ'
-                ? 'bg-emerald-600 text-white font-medium'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-            }`}
-          >
-            NSE Equities
-          </button>
-          <button
-            onClick={() => setFilterSegment('INDEX')}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              filterSegment === 'INDEX'
-                ? 'bg-emerald-600 text-white font-medium'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-            }`}
-          >
-            Indices
-          </button>
-          <button
-            onClick={() => setFilterSegment('FO')}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              filterSegment === 'FO'
-                ? 'bg-emerald-600 text-white font-medium'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-            }`}
-          >
-            F&O
-          </button>
+        <div role="tablist" aria-label="Instrument segments" className="flex items-center gap-1 px-4 py-2 bg-[#090d16] border-b border-slate-800/80 text-xs shrink-0">
+          {(
+            [
+              { label: 'All', value: 'ALL' },
+              { label: 'US Stocks', value: 'US' },
+              { label: 'NSE Equities', value: 'EQ' },
+              { label: 'Indices', value: 'INDEX' },
+              { label: 'F&O', value: 'FO' },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              role="tab"
+              aria-selected={filterSegment === tab.value}
+              onClick={() => setFilterSegment(tab.value)}
+              className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                filterSegment === tab.value
+                  ? 'bg-emerald-600 text-white font-medium'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Results List */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60">
-          {filteredResults.length === 0 && !isLoading && (
+          {searchError && !isLoading && !isPending && (
+            <div className="py-12 text-center text-rose-400 text-xs px-4">
+              {searchError}
+            </div>
+          )}
+
+          {filteredResults.length === 0 && !isLoading && !isPending && !searchError && (
             <div className="py-12 text-center text-slate-500 text-xs">
               No instruments found matching &quot;{query}&quot;
             </div>
@@ -298,15 +292,25 @@ export const SymbolSearchModal: React.FC = () => {
                 }}
                 tabIndex={0}
                 role="button"
-                onClick={() => handleSelectInstrument(item)}
+                aria-disabled={!canSelect}
+                onClick={() => {
+                  if (canSelect) handleSelectInstrument(item);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation();
                     e.preventDefault();
-                    handleSelectInstrument(item);
+                    if (canSelect) handleSelectInstrument(item);
+                  } else if (e.key === ' ') {
+                    e.preventDefault();
+                    if (canSelect) handleSelectInstrument(item);
                   }
                 }}
+                onFocus={() => setSelectedIndex(idx)}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors focus:outline-hidden ${
+                className={`flex items-center justify-between px-4 py-2.5 transition-colors focus:outline-hidden ${
+                  !canSelect ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                } ${
                   isSelected
                     ? 'bg-emerald-950/40 border-l-2 border-emerald-400'
                     : 'hover:bg-slate-800/40'

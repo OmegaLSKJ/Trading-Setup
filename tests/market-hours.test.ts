@@ -73,4 +73,53 @@ describe('Market Hours & Status Verification', () => {
     expect(isMarketOpenForInstrument('US|AAPL', saturday)).toBe(false);
     expect(isMarketOpenForInstrument('NSE_EQ|INE002A01018', saturday)).toBe(false);
   });
+
+  it('tests market-hours transitions at 09:14:59, 09:15:01, and across 15:30 IST', () => {
+    // 2026-10-07 is a Wednesday (non-holiday weekday)
+    // 09:14:59 IST = 03:44:59 UTC
+    const preMarketDate = new Date('2026-10-07T03:44:59Z');
+    const preMarketStatus = getIndianMarketStatus(preMarketDate);
+    expect(preMarketStatus.isOpen).toBe(false);
+    expect(preMarketStatus.session).toBe('PRE_MARKET');
+
+    // 09:15:01 IST = 03:45:01 UTC
+    const openDate = new Date('2026-10-07T03:45:01Z');
+    const openStatus = getIndianMarketStatus(openDate);
+    expect(openStatus.isOpen).toBe(true);
+    expect(openStatus.session).toBe('OPEN');
+
+    // 15:29:59 IST = 09:59:59 UTC (just before close)
+    const beforeCloseDate = new Date('2026-10-07T09:59:59Z');
+    const beforeCloseStatus = getIndianMarketStatus(beforeCloseDate);
+    expect(beforeCloseStatus.isOpen).toBe(true);
+    expect(beforeCloseStatus.session).toBe('OPEN');
+
+    // 15:30:01 IST = 10:00:01 UTC (just after regular session close)
+    const postMarketDate = new Date('2026-10-07T10:00:01Z');
+    const postMarketStatus = getIndianMarketStatus(postMarketDate);
+    expect(postMarketStatus.isOpen).toBe(false);
+    expect(postMarketStatus.session).toBe('CLOSED');
+
+    // 16:00:01 IST = 10:30:01 UTC (after post-market close)
+    const closedDate = new Date('2026-10-07T10:30:01Z');
+    const closedStatus = getIndianMarketStatus(closedDate);
+    expect(closedStatus.isOpen).toBe(false);
+    expect(closedStatus.session).toBe('CLOSED');
+  });
+
+  it('correctly evaluates MCX commodity market hours (09:00 - 23:30 IST)', () => {
+    // 2026-10-07 is Wednesday
+    // 20:00 IST = 14:30 UTC -> MCX is OPEN
+    const mcxOpenDate = new Date('2026-10-07T14:30:00Z');
+    const mcxOpenStatus = getMCXMarketStatus(mcxOpenDate);
+    expect(mcxOpenStatus.isOpen).toBe(true);
+    expect(mcxOpenStatus.session).toBe('OPEN');
+    expect(mcxOpenStatus.exchange).toBe('MCX');
+
+    // 23:31 IST = 18:01 UTC -> MCX is CLOSED
+    const mcxClosedDate = new Date('2026-10-07T18:01:00Z');
+    const mcxClosedStatus = getMCXMarketStatus(mcxClosedDate);
+    expect(mcxClosedStatus.isOpen).toBe(false);
+    expect(mcxClosedStatus.session).toBe('CLOSED');
+  });
 });

@@ -1,12 +1,13 @@
 import { Timeframe } from './types';
 
 export const MAX_SPAN_DAYS_INTRADAY = 366;
+export const MAX_SPAN_DAYS_DAILY = 3652;
 
 /**
  * Format a Date object to YYYY-MM-DD
  */
 export function formatDateYYYYMMDD(d: Date): string {
-  const year = d.getFullYear();
+  const year = String(d.getFullYear()).padStart(4, '0');
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
@@ -14,6 +15,7 @@ export function formatDateYYYYMMDD(d: Date): string {
 
 /**
  * Validate strict YYYY-MM-DD calendar date with actual calendar validity (e.g. leap years, valid days per month)
+ * Supports years 0000-9999.
  */
 export function isValidCalendarDate(dateStr: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
@@ -25,16 +27,82 @@ export function isValidCalendarDate(dateStr: string): boolean {
   if (month < 1 || month > 12) return false;
   if (day < 1 || day > 31) return false;
 
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const d = new Date(0);
+  d.setUTCFullYear(year, month, 0);
+  const daysInMonth = d.getUTCDate();
   return day <= daysInMonth;
 }
 
 /**
- * Parses YYYY-MM-DD into a UTC midnight timestamp (seconds)
+ * Parses YYYY-MM-DD into a UTC midnight timestamp (seconds).
+ * Uses setUTCFullYear to support years 0000-0099.
  */
 export function dateStringToUtcSeconds(dateStr: string): number {
   const [year, month, day] = dateStr.split('-').map(Number);
-  return Math.floor(Date.UTC(year, month - 1, day, 0, 0, 0) / 1000);
+  const d = new Date(0);
+  d.setUTCFullYear(year, month - 1, day);
+  d.setUTCHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+}
+
+/**
+ * Calculates start and end timestamps (in seconds) for a calendar date range
+ * evaluated in exchange-local time (e.g. 'Asia/Kolkata' or 'America/New_York').
+ * fromSec corresponds to 00:00:00 in timeZone on fromDateStr.
+ * toSecEnd corresponds to 23:59:59 in timeZone on toDateStr.
+ */
+export function getExchangeLocalDateBounds(
+  fromDateStr: string,
+  toDateStr: string,
+  timeZone: string
+): { fromSec: number; toSecEnd: number } {
+  const [fYear, fMonth, fDay] = fromDateStr.split('-').map(Number);
+  const [tYear, tMonth, tDay] = toDateStr.split('-').map(Number);
+
+  function getLocalTimestampSec(
+    year: number,
+    month: number,
+    day: number,
+    hour: number,
+    minute: number,
+    second: number
+  ): number {
+    const approx = new Date(0);
+    approx.setUTCFullYear(year, month - 1, day);
+    approx.setUTCHours(hour, minute, second, 0);
+
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false,
+    });
+
+    const parts = dtf.formatToParts(approx);
+    const p: Record<string, number> = {};
+    for (const part of parts) {
+      if (part.type !== 'literal') {
+        p[part.type] = parseInt(part.value, 10);
+      }
+    }
+
+    const tzDateAsUtc = new Date(0);
+    tzDateAsUtc.setUTCFullYear(p.year, p.month - 1, p.day);
+    tzDateAsUtc.setUTCHours(p.hour === 24 ? 0 : p.hour, p.minute, p.second, 0);
+
+    const offsetMs = tzDateAsUtc.getTime() - approx.getTime();
+    const targetUtcMs = approx.getTime() - offsetMs;
+    return Math.floor(targetUtcMs / 1000);
+  }
+
+  const fromSec = getLocalTimestampSec(fYear, fMonth, fDay, 0, 0, 0);
+  const toSecEnd = getLocalTimestampSec(tYear, tMonth, tDay, 23, 59, 59);
+
+  return { fromSec, toSecEnd };
 }
 
 /**

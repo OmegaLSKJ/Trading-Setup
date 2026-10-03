@@ -49,11 +49,12 @@ export const LayoutManagerModal: React.FC = () => {
 
       {/* Save Current Layout Form */}
       <form onSubmit={handleSave} className="p-4 border-b border-slate-800 bg-[#090d16]">
-        <div className="text-xs text-slate-400 mb-2 font-medium">
+        <label htmlFor="layout-name-input" className="block text-xs text-slate-400 mb-2 font-medium">
           Save Current Setup ({layoutMode.toUpperCase()} Grid, {charts.length} charts)
-        </div>
+        </label>
         <div className="flex gap-2">
           <input
+            id="layout-name-input"
             type="text"
             value={layoutName}
             onChange={(e) => setLayoutName(e.target.value)}

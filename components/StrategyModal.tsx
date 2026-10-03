@@ -107,9 +107,11 @@ export const StrategyModal: React.FC<Props> = ({
       )}
 
       {/* Tab Switcher */}
-      <div className="flex items-center justify-between border-b border-slate-800 bg-[#090d16] px-5 shrink-0">
+      <div role="tablist" aria-label="Strategy modal tabs" className="flex items-center justify-between border-b border-slate-800 bg-[#090d16] px-5 shrink-0">
         <div className="flex gap-4">
           <button
+            role="tab"
+            aria-selected={activeTab === 'RULES'}
             onClick={() => setActiveTab('RULES')}
             className={`py-2.5 text-xs font-semibold border-b-2 cursor-pointer transition-colors ${
               activeTab === 'RULES'
@@ -120,6 +122,8 @@ export const StrategyModal: React.FC<Props> = ({
             Strategy Rules &amp; Telemetry
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'TRADES'}
             onClick={() => setActiveTab('TRADES')}
             className={`py-2.5 text-xs font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
               activeTab === 'TRADES'

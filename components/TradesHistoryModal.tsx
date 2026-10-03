@@ -264,10 +264,11 @@ export const TradesHistoryModal: React.FC = () => {
       <div className="px-5 py-3 bg-[#0d1322] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
         {/* Symbol Filter */}
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <label htmlFor="trades-stock-select" className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
             Stock:
-          </span>
+          </label>
           <select
+            id="trades-stock-select"
             value={selectedSymbol}
             onChange={(e) => setSelectedSymbol(e.target.value)}
             className="bg-[#070a12] border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-semibold text-white focus:outline-hidden focus:border-purple-500 cursor-pointer"
@@ -282,8 +283,10 @@ export const TradesHistoryModal: React.FC = () => {
         </div>
 
         {/* Filter Pills */}
-        <div className="flex items-center gap-1 bg-[#070a12] p-1 rounded-lg border border-slate-800 text-xs">
+        <div role="tablist" aria-label="Trade status filters" className="flex items-center gap-1 bg-[#070a12] p-1 rounded-lg border border-slate-800 text-xs">
           <button
+            role="tab"
+            aria-selected={filterType === 'ALL'}
             onClick={() => setFilterType('ALL')}
             className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
               filterType === 'ALL'
@@ -294,6 +297,8 @@ export const TradesHistoryModal: React.FC = () => {
             All ({rawTrades.length})
           </button>
           <button
+            role="tab"
+            aria-selected={filterType === 'WINNERS'}
             onClick={() => setFilterType('WINNERS')}
             className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
               filterType === 'WINNERS'
@@ -304,6 +309,8 @@ export const TradesHistoryModal: React.FC = () => {
             Winners ({stats.winCount})
           </button>
           <button
+            role="tab"
+            aria-selected={filterType === 'LOSERS'}
             onClick={() => setFilterType('LOSERS')}
             className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
               filterType === 'LOSERS'
@@ -314,6 +321,8 @@ export const TradesHistoryModal: React.FC = () => {
             Losses ({stats.lossCount})
           </button>
           <button
+            role="tab"
+            aria-selected={filterType === 'OPEN'}
             onClick={() => setFilterType('OPEN')}
             className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
               filterType === 'OPEN'
@@ -404,12 +413,32 @@ export const TradesHistoryModal: React.FC = () => {
             Best / Worst Closed
           </div>
           <div className="text-xs font-bold font-mono mt-0.5 flex items-center justify-between">
-            <span className="text-emerald-400">
-              {stats.closedCount > 0 ? `+${stats.bestTrade}%` : 'N/A'}
+            <span
+              className={
+                stats.bestTrade > 0
+                  ? 'text-emerald-400'
+                  : stats.bestTrade < 0
+                  ? 'text-rose-400'
+                  : 'text-slate-400'
+              }
+            >
+              {stats.closedCount > 0
+                ? `${stats.bestTrade > 0 ? '+' : ''}${stats.bestTrade}%`
+                : 'N/A'}
             </span>
             <span className="text-slate-500">/</span>
-            <span className="text-rose-400">
-              {stats.closedCount > 0 ? `${stats.worstTrade}%` : 'N/A'}
+            <span
+              className={
+                stats.worstTrade > 0
+                  ? 'text-emerald-400'
+                  : stats.worstTrade < 0
+                  ? 'text-rose-400'
+                  : 'text-slate-400'
+              }
+            >
+              {stats.closedCount > 0
+                ? `${stats.worstTrade > 0 ? '+' : ''}${stats.worstTrade}%`
+                : 'N/A'}
             </span>
           </div>
         </div>
@@ -432,7 +461,7 @@ export const TradesHistoryModal: React.FC = () => {
       </div>
 
       {/* Scrollable Trades Table with Horizontal & Vertical Scroller */}
-      <div className="flex-1 overflow-hidden min-h-[300px] flex flex-col p-4">
+      <div className="flex-1 overflow-hidden min-h-[160px] flex flex-col p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 px-1 text-xs text-slate-400">
           <span className="flex items-center gap-1.5 text-purple-300 font-medium">
             <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />

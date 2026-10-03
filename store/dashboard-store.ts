@@ -17,9 +17,9 @@ import {
 import { PastTrade } from '@/lib/strategy';
 import { isValidTimezone, DEFAULT_TIMEZONE } from '@/lib/timezones';
 
-const SCHEMA_VERSION = '1.0';
+export const SCHEMA_VERSION = '2';
 
-const DEFAULT_INDICATORS: IndicatorConfig = {
+export const DEFAULT_INDICATORS: IndicatorConfig = {
   ema8: true,
   ema16: true,
   ema20: false,
@@ -266,7 +266,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   openSymbolSearch: (targetChartId) =>
     set((state) => ({
       isSymbolSearchOpen: true,
-      targetChartForSearch: targetChartId || state.activeChartId,
+      targetChartForSearch: targetChartId !== undefined ? targetChartId : state.activeChartId,
       isLayoutModalOpen: false,
       isSettingsModalOpen: false,
       isTradesModalOpen: false,
@@ -292,19 +292,42 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   recordTradesForSymbol: (symbol, trades) =>
     set((state) => {
-      const existing = state.symbolTrades[symbol];
-      if (existing && existing.length === trades.length) {
-        const lastExisting = existing[existing.length - 1];
-        const lastNew = trades[trades.length - 1];
-        if (
-          lastExisting?.id === lastNew?.id &&
-          lastExisting?.status === lastNew?.status &&
-          lastExisting?.exitPrice === lastNew?.exitPrice &&
-          lastExisting?.pnlAmount === lastNew?.pnlAmount
-        ) {
+      const existing = state.symbolTrades[symbol] || [];
+
+      // Clear the ledger when evaluation returns no trades
+      if (trades.length === 0) {
+        if (existing.length === 0) return state;
+        return {
+          symbolTrades: {
+            ...state.symbolTrades,
+            [symbol]: [],
+          },
+        };
+      }
+
+      if (existing.length === trades.length) {
+        // Compare all records or a stable list signature in the equality shortcut
+        let isIdentical = true;
+        for (let i = 0; i < trades.length; i++) {
+          const e = existing[i];
+          const t = trades[i];
+          if (
+            e.id !== t.id ||
+            e.status !== t.status ||
+            e.entryPrice !== t.entryPrice ||
+            e.exitPrice !== t.exitPrice ||
+            e.pnlAmount !== t.pnlAmount ||
+            e.durationBars !== t.durationBars
+          ) {
+            isIdentical = false;
+            break;
+          }
+        }
+        if (isIdentical) {
           return state;
         }
       }
+
       return {
         symbolTrades: {
           ...state.symbolTrades,
@@ -315,12 +338,20 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   navigateToTrade: (symbol, time, id) => {
     const { charts, watchlist } = get();
+    const hadExpanded = charts.some((c) => c.isExpanded);
     const existingChart = charts.find(
       (c) => c.instrument.trading_symbol.toUpperCase() === symbol.toUpperCase()
     );
 
     if (existingChart) {
+      // Clear or transfer expansion to activated chart
+      const updatedCharts = charts.map((c) =>
+        c.id === existingChart.id
+          ? { ...c, isExpanded: hadExpanded }
+          : { ...c, isExpanded: false }
+      );
       set({
+        charts: updatedCharts,
         activeChartId: existingChart.id,
         isTradesModalOpen: false,
         targetTradeNavigation: { symbol, time, id },
@@ -342,7 +373,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         get().updateChartInstrument(activeId, targetInstrument);
       }
 
+      const updatedCharts = get().charts.map((c) =>
+        c.id === activeId ? { ...c, isExpanded: hadExpanded } : { ...c, isExpanded: false }
+      );
+
       set({
+        charts: updatedCharts,
         activeChartId: activeId,
         isTradesModalOpen: false,
         targetTradeNavigation: { symbol, time, id },
@@ -369,19 +405,26 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const nextCharts = charts.map((c) => ({ ...c, isExpanded: false }));
 
     // If switching to a grid mode with higher capacity than current charts,
-    // auto-populate remaining slots with unopen instruments from watchlist or defaults
+    // auto-populate remaining slots with unopen instruments deduplicated from watchlist and defaults
     if (nextCharts.length < capacity) {
       const openKeys = new Set(nextCharts.map((c) => c.instrument.instrument_key));
       const openSymbols = new Set(nextCharts.map((c) => c.instrument.trading_symbol.toUpperCase()));
 
-      const availableFromWatchlist = watchlist.filter(
-        (w) => !openKeys.has(w.instrument_key) && !openSymbols.has(w.trading_symbol.toUpperCase())
-      );
-      const availableDefaults = DEFAULT_INSTRUMENTS.filter(
-        (d) => !openKeys.has(d.instrument_key) && !openSymbols.has(d.trading_symbol.toUpperCase())
-      );
+      // Deduplicate combined watchlist and default candidates against open instruments and each other
+      const pool: Instrument[] = [];
+      const poolKeys = new Set<string>();
+      const poolSymbols = new Set<string>();
 
-      const pool = [...availableFromWatchlist, ...availableDefaults];
+      for (const inst of [...watchlist, ...DEFAULT_INSTRUMENTS]) {
+        const k = inst.instrument_key;
+        const s = (inst.trading_symbol || '').toUpperCase();
+        if (!openKeys.has(k) && !openSymbols.has(s) && !poolKeys.has(k) && !poolSymbols.has(s)) {
+          pool.push(inst);
+          poolKeys.add(k);
+          poolSymbols.add(s);
+        }
+      }
+
       let poolIdx = 0;
 
       while (nextCharts.length < capacity && nextCharts.length < 6 && poolIdx < pool.length) {
@@ -421,6 +464,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   openChartForInstrument: (instrument) => {
     const { charts, activeChartId, layoutMode } = get();
+    const hadExpanded = charts.some((c) => c.isExpanded);
 
     // Match instruments by instrument_key or trading_symbol
     const existingIdx = charts.findIndex(
@@ -431,7 +475,17 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
     if (existingIdx !== -1) {
       const targetChart = charts[existingIdx];
-      set({ activeChartId: targetChart.id });
+      // Clear or transfer expansion to target chart
+      const updatedCharts = charts.map((c) =>
+        c.id === targetChart.id
+          ? { ...c, isExpanded: hadExpanded }
+          : { ...c, isExpanded: false }
+      );
+      set({ charts: updatedCharts, activeChartId: targetChart.id });
+      safeLocalStorageSet(
+        'upstox_active_dashboard',
+        JSON.stringify({ charts: updatedCharts, layoutMode })
+      );
       return;
     }
 
@@ -446,10 +500,14 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         timeframe: charts[0]?.timeframe || '5m',
         dateRangePreset: charts[0]?.dateRangePreset || '5D',
         indicators: { ...DEFAULT_INDICATORS },
-        isExpanded: false,
+        isExpanded: hadExpanded,
       };
 
-      const updatedCharts = [...charts, newChart];
+      const updatedCharts: ChartPanelState[] = [
+        ...charts.map((c) => ({ ...c, isExpanded: false })),
+        newChart,
+      ];
+
       set({ charts: updatedCharts, activeChartId: newChart.id });
       safeLocalStorageSet(
         'upstox_active_dashboard',
@@ -466,8 +524,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             ...c,
             instrument,
             indicators: { ...c.indicators }, // Preserve user indicators without forcing
+            isExpanded: hadExpanded,
           }
-        : c
+        : { ...c, isExpanded: false }
     );
 
     set({ charts: updatedCharts, activeChartId: targetId });
@@ -644,14 +703,21 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const openKeys = new Set(charts.map((c) => c.instrument.instrument_key));
     const openSymbols = new Set(charts.map((c) => c.instrument.trading_symbol.toUpperCase()));
 
-    const availableFromWatchlist = watchlist.filter(
-      (w) => !openKeys.has(w.instrument_key) && !openSymbols.has(w.trading_symbol.toUpperCase())
-    );
-    const availableDefaults = DEFAULT_INSTRUMENTS.filter(
-      (d) => !openKeys.has(d.instrument_key) && !openSymbols.has(d.trading_symbol.toUpperCase())
-    );
+    // Deduplicate combined watchlist and default candidates against open instruments and each other
+    const pool: Instrument[] = [];
+    const poolKeys = new Set<string>();
+    const poolSymbols = new Set<string>();
 
-    const pool = [...availableFromWatchlist, ...availableDefaults];
+    for (const inst of [...watchlist, ...DEFAULT_INSTRUMENTS]) {
+      const k = inst.instrument_key;
+      const s = (inst.trading_symbol || '').toUpperCase();
+      if (!openKeys.has(k) && !openSymbols.has(s) && !poolKeys.has(k) && !poolSymbols.has(s)) {
+        pool.push(inst);
+        poolKeys.add(k);
+        poolSymbols.add(s);
+      }
+    }
+
     let poolIdx = 0;
     const nextCharts = [...charts];
 
@@ -739,29 +805,34 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   loadSavedLayout: (layoutId) => {
     const { savedLayouts } = get();
     const target = savedLayouts.find((l) => l.id === layoutId);
-    if (!target) return;
+    if (!target || !Array.isArray(target.charts) || target.charts.length === 0) return;
+
+    // Guard panel entries
+    for (const c of target.charts) {
+      if (!c || !c.instrumentKey || !c.tradingSymbol) return;
+    }
 
     const restoredCharts: ChartPanelState[] = target.charts.map((c, i) => ({
-      id: `chart-${Date.now()}-${i}`,
+      id: `chart-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 5)}`,
       instrument: {
         instrument_key: c.instrumentKey,
         trading_symbol: c.tradingSymbol,
-        name: c.name,
-        exchange: c.exchange as Exchange,
-        segment: c.segment as InstrumentSegment,
+        name: c.name || c.tradingSymbol,
+        exchange: (c.exchange || 'NSE') as Exchange,
+        segment: (c.segment || 'NSE_EQ') as InstrumentSegment,
       },
-
-      timeframe: c.timeframe,
-      dateRangePreset: c.dateRangePreset,
+      timeframe: ALLOWED_TIMEFRAMES.has(c.timeframe) ? c.timeframe : '5m',
+      dateRangePreset: ALLOWED_DATE_PRESETS.has(c.dateRangePreset) ? c.dateRangePreset : '5D',
       customFrom: c.customFrom,
       customTo: c.customTo,
-      indicators: c.indicators,
+      indicators: { ...DEFAULT_INDICATORS, ...(c.indicators || {}) },
+      isExpanded: false,
     }));
 
     set({
-      layoutMode: target.layoutMode,
+      layoutMode: ALLOWED_LAYOUT_MODES.has(target.layoutMode) ? target.layoutMode : '4',
       charts: restoredCharts,
-      syncSettings: target.syncSettings,
+      syncSettings: target.syncSettings || get().syncSettings,
       activeChartId: restoredCharts[0]?.id || '',
     });
     safeLocalStorageSet(
@@ -802,25 +873,34 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   loadPersistedState: () => {
     if (typeof window === 'undefined') return;
 
-    // 1. Schema version
+    // 1. Schema version: reject or migrate mismatched schema versions
     try {
       const storedVersion = localStorage.getItem('upstox_schema_version');
       if (!storedVersion) {
         safeLocalStorageSet('upstox_schema_version', SCHEMA_VERSION);
+      } else if (storedVersion !== SCHEMA_VERSION) {
+        console.warn(`Schema version mismatch: expected ${SCHEMA_VERSION}, got ${storedVersion}. Resetting stale persisted state.`);
+        safeLocalStorageSet('upstox_schema_version', SCHEMA_VERSION);
+        set({ isHydrated: true });
+        return;
       }
     } catch {
       // ignore
     }
 
-    // 2. Watchlist
+    // 2. Watchlist: restore valid empty watchlists
     try {
       const savedWatchlist = localStorage.getItem('upstox_watchlist');
       if (savedWatchlist) {
         const parsed = JSON.parse(savedWatchlist);
         if (Array.isArray(parsed)) {
-          const validated = parsed.filter(isValidInstrument);
-          if (validated.length > 0) {
-            set({ watchlist: validated });
+          if (parsed.length === 0) {
+            set({ watchlist: [] });
+          } else {
+            const validated = parsed.filter(isValidInstrument);
+            if (validated.length === parsed.length) {
+              set({ watchlist: validated });
+            }
           }
         }
       }
@@ -828,13 +908,48 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       console.warn('Watchlist hydration error:', e);
     }
 
-    // 3. Saved Layouts
+    // 3. Saved Layouts: validate charts array, panel entries, unique non-empty IDs
     try {
       const savedLayouts = localStorage.getItem('upstox_saved_layouts');
       if (savedLayouts) {
         const parsed = JSON.parse(savedLayouts);
         if (Array.isArray(parsed)) {
-          set({ savedLayouts: parsed });
+          const validatedLayouts: SavedLayout[] = [];
+          for (const l of parsed) {
+            if (
+              !l ||
+              typeof l !== 'object' ||
+              typeof l.id !== 'string' ||
+              !l.id.trim() ||
+              typeof l.name !== 'string' ||
+              !ALLOWED_LAYOUT_MODES.has(l.layoutMode) ||
+              !Array.isArray(l.charts) ||
+              l.charts.length === 0
+            ) {
+              continue;
+            }
+
+            let allPanelsValid = true;
+            for (const pc of l.charts) {
+              if (
+                !pc ||
+                typeof pc !== 'object' ||
+                typeof pc.instrumentKey !== 'string' ||
+                !pc.instrumentKey.trim() ||
+                typeof pc.tradingSymbol !== 'string' ||
+                !ALLOWED_TIMEFRAMES.has(pc.timeframe) ||
+                !ALLOWED_DATE_PRESETS.has(pc.dateRangePreset)
+              ) {
+                allPanelsValid = false;
+                break;
+              }
+            }
+
+            if (allPanelsValid) {
+              validatedLayouts.push(l);
+            }
+          }
+          set({ savedLayouts: validatedLayouts });
         }
       }
     } catch (e) {
@@ -897,9 +1012,19 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         const parsed = JSON.parse(active);
         if (parsed && Array.isArray(parsed.charts) && parsed.charts.length > 0) {
           const validatedCharts = parsed.charts.filter(isValidChartState);
-          if (validatedCharts.length > 0) {
+          // Require unique, non-empty panel IDs
+          const seenIds = new Set<string>();
+          const uniqueIdCharts: ChartPanelState[] = [];
+          for (const c of validatedCharts) {
+            if (c.id && c.id.trim() && !seenIds.has(c.id)) {
+              seenIds.add(c.id);
+              uniqueIdCharts.push(c);
+            }
+          }
+
+          if (uniqueIdCharts.length > 0) {
             // Restore actual indicators without forcing artificial values
-            const restoredCharts = validatedCharts.map((c: ChartPanelState) => ({
+            const restoredCharts = uniqueIdCharts.map((c: ChartPanelState) => ({
               ...c,
               indicators: {
                 ...DEFAULT_INDICATORS,
@@ -920,18 +1045,21 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
               const openSymbols = new Set(
                 finalCharts.map((c) => c.instrument.trading_symbol.toUpperCase())
               );
-              const pool = [
-                ...currentWatchlist.filter(
-                  (w) =>
-                    !openKeys.has(w.instrument_key) &&
-                    !openSymbols.has(w.trading_symbol.toUpperCase())
-                ),
-                ...DEFAULT_INSTRUMENTS.filter(
-                  (d) =>
-                    !openKeys.has(d.instrument_key) &&
-                    !openSymbols.has(d.trading_symbol.toUpperCase())
-                ),
-              ];
+              // Deduplicate combined pool against open instruments and each other
+              const pool: Instrument[] = [];
+              const poolKeys = new Set<string>();
+              const poolSymbols = new Set<string>();
+
+              for (const inst of [...currentWatchlist, ...DEFAULT_INSTRUMENTS]) {
+                const k = inst.instrument_key;
+                const s = (inst.trading_symbol || '').toUpperCase();
+                if (!openKeys.has(k) && !openSymbols.has(s) && !poolKeys.has(k) && !poolSymbols.has(s)) {
+                  pool.push(inst);
+                  poolKeys.add(k);
+                  poolSymbols.add(s);
+                }
+              }
+
               let poolIdx = 0;
               while (
                 finalCharts.length < capacity &&

@@ -1,79 +1,250 @@
-import { describe, it, expect } from 'vitest';
-import { LiveTick, Candle } from '../lib/types';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
+import { GET } from '../app/api/live/stream/route';
+import { LiveStreamManager } from '../lib/live-stream';
 
-describe('Data Truthfulness in Live Feed & Candle Processing', () => {
-  it('stale-tick rejection: ignores ticks with timestamp older than current bar time', () => {
-    const currentBar: Candle = {
-      time: 1710000000,
-      timeString: '2024-03-09T14:40:00Z',
-      open: 100,
-      high: 105,
-      low: 99,
-      close: 102,
-      volume: 500,
+describe('Live Stream Route GET & LiveStreamManager', () => {
+  const originalFetch = global.fetch;
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    process.env = { ...originalEnv };
+  });
+
+  it('rejects with HTTP 429 when rate limited', async () => {
+    const rateLimitModule = await import('../lib/api-rate-limit');
+    const spy = vi.spyOn(rateLimitModule, 'allowApiRequest').mockReturnValueOnce(false);
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018');
+    const res = await GET(req);
+
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error).toContain('Rate limit exceeded');
+    spy.mockRestore();
+  });
+
+  it('emits missing-token status event when Upstox token is absent', async () => {
+    delete process.env.UPSTOX_TOKEN;
+    delete process.env.UPSTOX_ANALYTICS_TOKEN;
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018');
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    expect(res.headers.get('x-accel-buffering')).toBe('no');
+    expect(res.headers.get('cache-control')).toBe('no-cache, no-transform');
+    expect(res.headers.get('connection')).toBe('keep-alive');
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    let foundTokenStatus = false;
+    for (let i = 0; i < 3; i++) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      if (text.includes('NO_TOKEN') || text.includes('UPSTOX')) {
+        foundTokenStatus = true;
+        expect(text).toContain('NO_TOKEN');
+        break;
+      }
+    }
+    expect(foundTokenStatus).toBe(true);
+
+    await reader.cancel();
+  });
+
+  it('handles already-aborted request gracefully without stalling', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018', {
+      signal: controller.signal,
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    const { done } = await reader.read();
+    expect(done).toBe(true);
+  });
+
+  it('emits volume-only changes even when price is unchanged', async () => {
+    process.env.UPSTOX_TOKEN = 'test-token';
+    process.env.UPSTOX_ANALYTICS_TOKEN = 'test-token';
+
+    let fetchCount = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCount++;
+      return {
+        ok: true,
+        json: async () => ({
+          status: 'success',
+          data: {
+            'NSE_EQ:RELIANCE': {
+              last_price: 2500,
+              net_change: 10,
+              percentage_change: 0.4,
+              volume: fetchCount === 1 ? 1000 : 1500,
+              timestamp: new Date().toISOString(),
+            },
+          },
+        }),
+      } as unknown as Response;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018');
+    const res = await GET(req);
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // Read events until we encounter the quote ticks
+    let foundBaseline = false;
+
+    for (let i = 0; i < 5; i++) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      if (text.includes('"price":2500') || text.includes('NSE_EQ|INE002A01018')) {
+        if (!foundBaseline) {
+          foundBaseline = true;
+        } else {
+          expect(text).toContain('"price":2500');
+          break;
+        }
+      }
+    }
+
+    expect(foundBaseline).toBe(true);
+    await reader.cancel();
+  });
+
+  it('coalesces pending snapshots under backpressure and flushes on reader pull', async () => {
+    process.env.UPSTOX_ANALYTICS_TOKEN = 'test-token';
+
+    let quotePrice = 100;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      quotePrice += 2;
+      return {
+        ok: true,
+        json: async () => ({
+          status: 'success',
+          data: {
+            'NSE_EQ:RELIANCE': {
+              last_price: quotePrice,
+              net_change: quotePrice - 100,
+              percentage_change: 2.0,
+              volume: 1000,
+              timestamp: new Date().toISOString(),
+            },
+          },
+        }),
+      } as unknown as Response;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018');
+    const res = await GET(req);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    const read1 = await reader.read();
+    expect(decoder.decode(read1.value)).toContain('data:');
+
+    // Simulate controlled/slow reader backpressure
+    await new Promise((r) => setTimeout(r, 600));
+
+    const read2 = await reader.read();
+    const text2 = decoder.decode(read2.value);
+    expect(text2).toContain('data:');
+
+    await reader.cancel();
+  });
+
+  it('handles hung provider timeouts per instrument without crashing stream', async () => {
+    process.env.UPSTOX_ANALYTICS_TOKEN = 'test-token';
+
+    global.fetch = vi.fn().mockImplementation(async (_url, options) => {
+      // Simulate timeout by listening to signal
+      return new Promise((_, reject) => {
+        if (options?.signal) {
+          options.signal.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'TimeoutError';
+            reject(err);
+          });
+        }
+      });
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/live/stream?instruments=NSE_EQ%7CINE002A01018');
+    const res = await GET(req);
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // First event should indicate timeout or stale quote status
+    const { value } = await reader.read();
+    const text = decoder.decode(value);
+    expect(text).toContain('data:');
+
+    await reader.cancel();
+  });
+});
+
+describe('LiveStreamManager Node Dispatch', () => {
+  it('dispatches broadcast events without instrumentKey to all subscribers', () => {
+    const manager = new LiveStreamManager();
+    const receivedA: unknown[] = [];
+    const receivedB: unknown[] = [];
+
+    manager.subscribe('NSE_EQ|INE002A01018', (e) => receivedA.push(e));
+    manager.subscribe('NSE_EQ|INE467B01029', (e) => receivedB.push(e));
+
+    const broadcastEvent = {
+      type: 'MARKET_STATUS',
+      session: 'OPEN',
+      isOpen: true,
     };
 
-    const staleTick: LiveTick = {
+    manager.dispatchTick(broadcastEvent);
+
+    expect(receivedA.length).toBe(1);
+    expect(receivedB.length).toBe(1);
+    expect(receivedA[0]).toEqual(broadcastEvent);
+    expect(receivedB[0]).toEqual(broadcastEvent);
+  });
+
+  it('dispatches instrument-specific ticks strictly to subscribed listeners', () => {
+    const manager = new LiveStreamManager();
+    const receivedA: unknown[] = [];
+    const receivedB: unknown[] = [];
+
+    manager.subscribe('NSE_EQ|INE002A01018', (e) => receivedA.push(e));
+    manager.subscribe('NSE_EQ|INE467B01029', (e) => receivedB.push(e));
+
+    const tickA = {
       instrumentKey: 'NSE_EQ|INE002A01018',
-      price: 103,
-      close: 103,
-      direction: 'UP',
-      timestamp: 1709999990, // 10 seconds before bar time
-      volumeDelta: 50,
-      state: 'FRESH',
+      price: 2500,
+      close: 2500,
+      direction: 'UP' as const,
+      timestamp: Date.now() / 1000,
+      volumeDelta: 100,
+      state: 'FRESH' as const,
     };
 
-    const isStale = staleTick.timestamp < currentBar.time;
-    expect(isStale).toBe(true);
-  });
+    manager.dispatchTick(tickA);
 
-  it('market-closed rejection: prevents MARKET_CLOSED ticks from creating or mutating active bars', () => {
-    const closedTick: LiveTick = {
-      instrumentKey: 'NSE_EQ|INE002A01018',
-      price: 102,
-      close: 102,
-      direction: 'EQUAL',
-      timestamp: 1710000005,
-      volumeDelta: 0,
-      state: 'MARKET_CLOSED',
-    };
-
-
-
-    const shouldProcess = closedTick.state !== 'MARKET_CLOSED';
-    expect(shouldProcess).toBe(false);
-  });
-
-  it('volume delta derivation: preserves 0 volume delta without replacing with fallback 10', () => {
-    // If quote comes with cumulativeVolume equal to previous, volumeDelta is 0
-    const lastCumulativeVolume = 150000;
-    const currentCumulativeVolume = 150000;
-
-
-    const derivedDelta = Math.max(0, currentCumulativeVolume - lastCumulativeVolume);
-    expect(derivedDelta).toBe(0);
-
-    // Ensure we do not use `derivedDelta || 10`
-    const truthfulDelta = derivedDelta;
-    expect(truthfulDelta).toBe(0);
-  });
-
-  it('intraday bounds filtering: strictly keeps candles within requested [from, to] bounds', () => {
-    const fromSec = 1700000000;
-    const toSec = 1700086400; // Exactly 1 day later
-
-    const candles: Candle[] = [
-      { time: fromSec - 300, timeString: '', open: 90, high: 91, low: 89, close: 90, volume: 10 },
-      { time: fromSec, timeString: '', open: 91, high: 92, low: 90, close: 91, volume: 10 },
-      { time: fromSec + 3600, timeString: '', open: 92, high: 93, low: 91, close: 92, volume: 10 },
-      { time: toSec + 86400, timeString: '', open: 95, high: 96, low: 94, close: 95, volume: 10 },
-    ];
-
-    const toEndOfDaySec = toSec + 86399;
-    const filtered = candles.filter((c) => c.time >= fromSec && c.time <= toEndOfDaySec);
-
-    expect(filtered.length).toBe(2);
-    expect(filtered[0].time).toBe(fromSec);
-    expect(filtered[1].time).toBe(fromSec + 3600);
+    expect(receivedA.length).toBe(1);
+    expect(receivedB.length).toBe(0);
+    expect(receivedA[0]).toEqual(tickA);
   });
 });

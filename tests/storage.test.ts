@@ -1,90 +1,208 @@
-import { describe, it, expect } from 'vitest';
-import { getTimezoneOption, DEFAULT_TIMEZONE } from '../lib/timezones';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { useDashboardStore, DEFAULT_INDICATORS } from '../store/dashboard-store';
+import { Instrument } from '../lib/types';
 
+describe('Dashboard Storage & loadPersistedState', () => {
+  const storageMap = new Map<string, string>();
 
-describe('Storage & Migration Resilience', () => {
-  it('migrates Europe/Frankfurt to Europe/Berlin seamlessly', () => {
-    // Legacy value migration
-    const option = getTimezoneOption('Europe/Frankfurt');
-    expect(option.value).toBe('Europe/Berlin');
-    expect(option.region).toContain('Berlin');
+  const localStorageMock = {
+    getItem: (key: string) => storageMap.get(key) ?? null,
+    setItem: (key: string, value: string) => storageMap.set(key, String(value)),
+    removeItem: (key: string) => storageMap.delete(key),
+    clear: () => storageMap.clear(),
+  };
+
+  beforeEach(() => {
+    storageMap.clear();
+    Object.defineProperty(global, 'localStorage', {
+      value: localStorageMock,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(global, 'window', {
+      value: { localStorage: localStorageMock },
+      writable: true,
+      configurable: true,
+    });
   });
 
-  it('falls back to default timezone for unknown or invalid timezone values', () => {
-    const option = getTimezoneOption('Mars/Curiosity');
-    expect(option.value).toBe(DEFAULT_TIMEZONE);
+  it('restores valid empty watchlist round-trip without overwriting with defaults', () => {
+    storageMap.set('upstox_schema_version', '2');
+    storageMap.set('upstox_watchlist', '[]');
+
+    useDashboardStore.getState().loadPersistedState();
+    expect(useDashboardStore.getState().watchlist).toEqual([]);
   });
 
+  it('discards invalid saved layouts during hydration', () => {
+    storageMap.set('upstox_schema_version', '2');
 
-  it('validates corrupted localStorage JSON gracefully without throwing', () => {
-    // Test JSON parse error handling logic as applied in loadPersistedState
-    const malformedJson = '{ corrupted: [';
-    let parsed = null;
-    let failed = false;
+    const invalidLayouts = [
+      {
+        id: '', // Empty ID
+        name: 'Invalid ID',
+        layoutMode: '4',
+        charts: [],
+      },
+      {
+        id: 'valid-id-1',
+        name: 'Missing Charts Array',
+        layoutMode: '2h',
+        // charts is missing
+      },
+      {
+        id: 'valid-id-2',
+        name: 'Invalid Panel Config',
+        layoutMode: '1',
+        charts: [
+          {
+            instrumentKey: '', // Empty key
+            tradingSymbol: 'RELIANCE',
+            timeframe: '5m',
+            dateRangePreset: 'today',
+          },
+        ],
+      },
+      {
+        id: 'valid-id-3',
+        name: 'Fully Valid Layout',
+        layoutMode: '1',
+        charts: [
+          {
+            instrumentKey: 'NSE_EQ|INE002A01018',
+            tradingSymbol: 'RELIANCE',
+            timeframe: '5m',
+            dateRangePreset: '5D',
+            indicators: {},
+          },
+        ],
+      },
+    ];
 
-    try {
-      parsed = JSON.parse(malformedJson);
-    } catch {
-      failed = true;
-    }
+    storageMap.set('upstox_saved_layouts', JSON.stringify(invalidLayouts));
 
-    expect(failed).toBe(true);
-    expect(parsed).toBeNull();
+    useDashboardStore.getState().loadPersistedState();
+    const saved = useDashboardStore.getState().savedLayouts;
+
+    expect(saved.length).toBe(1);
+    expect(saved[0].id).toBe('valid-id-3');
+    expect(saved[0].name).toBe('Fully Valid Layout');
   });
 
-  it('validates schema versioning and rejects mismatched major versions', () => {
-    const CURRENT_STORAGE_VERSION = 2;
-    const oldPayload = {
-      version: 1,
-      charts: [{ id: 'chart-1', invalidField: true }],
+  it('rejects mismatched schema versions and resets state', () => {
+    storageMap.set('upstox_schema_version', '1'); // Outdated schema version
+    storageMap.set('upstox_watchlist', JSON.stringify([{ instrument_key: 'OLD_KEY', trading_symbol: 'OLD' }]));
+
+    useDashboardStore.getState().loadPersistedState();
+
+    // Mismatched version causes immediate return and schema reset to 2
+    expect(storageMap.get('upstox_schema_version')).toBe('2');
+    expect(useDashboardStore.getState().isHydrated).toBe(true);
+  });
+
+  it('auto-fills unique instruments up to 6 grid slots without duplicates', () => {
+    const store = useDashboardStore.getState();
+
+    // Setup 1 chart initially
+    const inst1: Instrument = {
+      instrument_key: 'NSE_INDEX|Nifty 50',
+      trading_symbol: 'NIFTY 50',
+      name: 'NIFTY 50',
+      exchange: 'NSE',
+      segment: 'NSE_INDEX',
+      instrument_type: 'INDEX',
     };
 
-    // If version is older or payload is invalid, hydration should safely discard or migrate
-    const isValidVersion = oldPayload.version === CURRENT_STORAGE_VERSION;
-    expect(isValidVersion).toBe(false);
-  });
-});
+    useDashboardStore.setState({
+      charts: [
+        {
+          id: 'chart-1',
+          instrument: inst1,
+          timeframe: '5m',
+          dateRangePreset: '5D',
+          indicators: { ...DEFAULT_INDICATORS },
+          isExpanded: false,
+        },
+      ],
+      layoutMode: '1',
+    });
 
-describe('Multi-Chart Grid Selection & Capacity', () => {
-  it('correctly maps layout modes to max chart capacity capped at 6', async () => {
-    const { getLayoutCapacity } = await import('../store/dashboard-store');
-    expect(getLayoutCapacity('1')).toBe(1);
-    expect(getLayoutCapacity('2h')).toBe(2);
-    expect(getLayoutCapacity('2v')).toBe(2);
-    expect(getLayoutCapacity('4')).toBe(4);
-    expect(getLayoutCapacity('6')).toBe(6);
-  });
-
-  it('allows opening multiple charts into empty grid slots without overwriting', async () => {
-    const { useDashboardStore } = await import('../store/dashboard-store');
-    const store = useDashboardStore.getState();
-
-    // Set to 6 grid layout
+    // Switch layout mode to 6
     store.setLayoutMode('6');
-    expect(useDashboardStore.getState().layoutMode).toBe('6');
-    expect(useDashboardStore.getState().charts.length).toBeLessThanOrEqual(6);
 
-    // If active chart exists, opening an existing instrument switches focus
-    const firstChart = useDashboardStore.getState().charts[0];
-    if (firstChart) {
-      useDashboardStore.getState().openChartForInstrument(firstChart.instrument);
-      expect(useDashboardStore.getState().activeChartId).toBe(firstChart.id);
-    }
+    const charts = useDashboardStore.getState().charts;
+    expect(charts.length).toBe(6);
+
+    // Verify all 6 chart panel instruments have unique instrument_keys and trading symbols
+    const keys = charts.map((c) => c.instrument.instrument_key);
+    const symbols = charts.map((c) => c.instrument.trading_symbol.toUpperCase());
+
+    const uniqueKeys = new Set(keys);
+    const uniqueSymbols = new Set(symbols);
+
+    expect(uniqueKeys.size).toBe(6);
+    expect(uniqueSymbols.size).toBe(6);
   });
 
-  it('un-expands maximized charts when changing layout mode so grid renders', async () => {
-    const { useDashboardStore } = await import('../store/dashboard-store');
+  it('transfers or clears expansion when activating chart B after expanding chart A', () => {
     const store = useDashboardStore.getState();
-    const firstChart = store.charts[0];
-    if (firstChart) {
-      // Simulate maximizing a chart
-      store.setChartExpanded(firstChart.id, true);
-      expect(useDashboardStore.getState().charts.find((c) => c.id === firstChart.id)?.isExpanded).toBe(true);
 
-      // Switching layout mode should automatically un-expand the chart so the grid is displayed
-      store.setLayoutMode('2v');
-      expect(useDashboardStore.getState().layoutMode).toBe('2v');
-      expect(useDashboardStore.getState().charts.some((c) => c.isExpanded)).toBe(false);
-    }
+    const instA: Instrument = {
+      instrument_key: 'NSE_EQ|INE002A01018',
+      trading_symbol: 'RELIANCE',
+      name: 'Reliance',
+      exchange: 'NSE',
+      segment: 'NSE_EQ',
+      instrument_type: 'EQ',
+    };
+    const instB: Instrument = {
+      instrument_key: 'NSE_EQ|INE467B01029',
+      trading_symbol: 'TCS',
+      name: 'TCS',
+      exchange: 'NSE',
+      segment: 'NSE_EQ',
+      instrument_type: 'EQ',
+    };
+
+    useDashboardStore.setState({
+      charts: [
+        {
+          id: 'chart-a',
+          instrument: instA,
+          timeframe: '5m',
+          dateRangePreset: '5D',
+          indicators: { ...DEFAULT_INDICATORS },
+          isExpanded: false,
+        },
+        {
+          id: 'chart-b',
+          instrument: instB,
+          timeframe: '5m',
+          dateRangePreset: '5D',
+          indicators: { ...DEFAULT_INDICATORS },
+          isExpanded: false,
+        },
+      ],
+      activeChartId: 'chart-a',
+      layoutMode: '2h',
+    });
+
+    // Expand chart A
+    store.setChartExpanded('chart-a', true);
+    expect(useDashboardStore.getState().charts.find((c) => c.id === 'chart-a')?.isExpanded).toBe(true);
+
+    // Activate chart B via openChartForInstrument
+    store.openChartForInstrument(instB);
+
+    const updatedCharts = useDashboardStore.getState().charts;
+    const chartA = updatedCharts.find((c) => c.id === 'chart-a');
+    const chartB = updatedCharts.find((c) => c.id === 'chart-b');
+
+    // Chart A must no longer be expanded
+    expect(chartA?.isExpanded).toBe(false);
+    // Active chart must be chart B
+    expect(useDashboardStore.getState().activeChartId).toBe('chart-b');
+    // Chart B inherits the expanded view
+    expect(chartB?.isExpanded).toBe(true);
   });
 });

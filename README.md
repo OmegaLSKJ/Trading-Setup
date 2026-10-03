@@ -8,9 +8,9 @@ Designed strictly for authentic market data visualization, multi-timeframe techn
 
 ## System Requirements & Prerequisites
 
-- **Node.js**: `>=20.9.0` (tested on Node v20 LTS and Node v26)
+- **Node.js**: `>=22.12.0` (LTS or later)
 - **Package Manager**: `npm` (v10+)
-- **Operating Environment**: Local workstation or single-user self-hosted deployment.
+- **Operating Environment**: Local workstation or single-instance self-hosted deployment. Only single-instance deployment is supported due to process-local queues and in-memory caches.
 - **File System**: Writable `.next/cache` and local storage directory for instrument gzip caching and Next.js build artifacts.
 
 ---
@@ -26,6 +26,33 @@ Designed strictly for authentic market data visualization, multi-timeframe techn
 
 ---
 
+## Pine Script Divergences (Custom 3-Candle Buy Strategy)
+
+The TypeScript strategy implementation in `lib/strategy.ts` diverges intentionally from `strategies/Custom3CandleBuyStrategy.pine` in several key aspects:
+
+1. **C2 Volume-SMA Alternative**: The TS implementation allows either reaching the day's highest volume up to C2 OR having C2 volume exceed 1.25x the 20-period volume SMA (`avgVol20 * 1.25`), whereas Pine strictly tests against `highestVolToday_c2`.
+2. **Two-Bar Entry Spacing**: The TS implementation enforces `i - lastEntryIndex >= 2` to prevent rapid duplicate entries across consecutive 5-minute bars.
+3. **Max-Hold Exit**: A protective 40-bar max hold exit rule closes trades after 40 bars without reaching TP or green-high exit, triggering global liquidation of open positions.
+4. **No 365-Day Window**: The TS implementation runs backtesting across the complete loaded date range requested by the user, rather than restricting to `timenow - 365 days`.
+5. **Indicator Rounding**: Indicator values (EMA, RSI, DPO, ADX) are rounded to 1 or 2 decimal places to match UI presentation and avoid floating-point representation anomalies.
+6. **Per-Entry Take Profit**: Each position calculates its 2% TP target based on its individual entry price (`entryPrice * 1.02`), rather than the blended average position price.
+7. **Daily Volume Reset Method**: Daily volume tracking is reset based on calendar date boundaries in the exchange-local timezone (`Asia/Kolkata` for Indian equities, `America/New_York` for US equities), rather than Pine's `ta.change(time("D"))`.
+
+---
+
+## Date Range Conventions & Process Architecture
+
+- **Date Presets**:
+  - `5D` calculates `to - 5 days`, yielding **six inclusive calendar dates**.
+  - Month subtraction (`1M`, `3M`, `6M`) uses JavaScript `Date.prototype.setMonth()` rollover semantics (e.g., March 31 minus 1 month rolls over into March 2/3 depending on leap years).
+- **Process-Local Architecture**:
+  - In-memory request queues (`RequestQueue`), in-memory LRU candle caches, and ingress rate limiters (`allowApiRequest`) are scoped to the individual Node.js process.
+  - Forwarded IP headers (`X-Forwarded-For`, `X-Real-IP`) are trusted only behind an authenticating reverse proxy that overwrites them.
+  - Quota protection, concurrency throttling, and deduplication operate within the single active instance.
+  - **Only single-instance deployment is supported**. Multi-instance clustering requires external shared state (e.g. Redis) for queues and rate limiters.
+
+---
+
 ## Server Lifecycle & Security Boundaries
 
 ### 1. Server-Only Credential Boundary
@@ -34,7 +61,7 @@ Designed strictly for authentic market data visualization, multi-timeframe techn
 - The browser never receives or handles upstream tokens.
 
 ### 2. Live Feed Streaming (`/api/live/stream`)
-- **Transport**: Server-Sent Events (SSE) configured with `force-dynamic` and periodic heartbeats (15s intervals).
+- **Transport**: Server-Sent Events (SSE) configured with `force-dynamic`, `X-Accel-Buffering: no`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, and periodic heartbeats (15s intervals).
 - **Polling-Backed Provider Feed**: Real quotes are polled from Upstox/Yahoo using completion-based cycles guarded against overlapping in-flight executions.
 - **Flow Control**: Monitors `controller.desiredSize` to throttle or coalesce ticks for slow downstream consumers.
 - **Idempotent Cleanup**: Upstream abort controllers, polling intervals, and heartbeats are cleared upon stream cancellation or client disconnect before asynchronous execution.
@@ -42,13 +69,13 @@ Designed strictly for authentic market data visualization, multi-timeframe techn
 
 ### 3. Date Pagination & Rate Limiting
 - **Chunk Boundaries**: Historical minute candle requests are partitioned into **29 calendar dates inclusive per chunk** (28-day offset) using timezone-independent calendar arithmetic (`lib/date-utils.ts`).
-- **Span Limits**: Enforces a strict 366-day limit for intraday minute spans to prevent memory exhaustion.
-- **Request Queue & Linear Backoff**: Outbound Upstox requests are serialized through an in-memory `RequestQueue` with a concurrency limit of 1 and bounded capacity of 150 pending requests.
-- **Jitter & Retry-After**: Network and 429 rate-limit exceptions follow linear backoff with randomized jitter (50–250ms) and respect upstream `Retry-After` response headers.
+- **Span Limits**: Enforces a strict 366-day limit for intraday minute spans and a 3652-day limit for daily spans.
+- **Request Queue & Backoff**: Outbound Upstox requests are serialized through an in-memory `RequestQueue` with a concurrency limit of 4 and bounded capacity of 150 pending requests.
+- **Jitter & Retry-After**: Network and 429 rate-limit exceptions follow exponential backoff with randomized jitter and respect upstream `Retry-After` response headers (both seconds and HTTP dates).
 
 ### 4. Instrument Master & Caching
-- **Coverage**: Downloads and decompresses the complete **NSE Instrument Master** (`NSE.json.gz`) asynchronously via `zlib.gunzip` and atomic file writes.
-- **Single-Flight Initialization**: Multiple concurrent searches share one initialization promise, with bounded non-blocking search fallback to seeded symbols.
+- **Coverage**: Downloads and decompresses the complete **NSE Instrument Master** (`NSE.json.gz`) asynchronously via `zlib.gunzip` with size limits and atomic file writes.
+- **Single-Flight Initialization**: Multiple concurrent searches share one initialization promise, with bounded non-blocking search fallback to seeded symbols. Stale masters (>24h) are refreshed in the background while continuing to serve current data.
 - **In-Memory Cache**: Candle responses are cached using an in-memory LRU cache bounded to 200 entries. **Only complete, successful responses are cached**; partial or failed ranges are never cached.
 
 ---
@@ -93,7 +120,7 @@ npm run typecheck
 # Code linting
 npm run lint
 
-# Vitest test suite (23 deterministic unit tests)
+# Vitest test suite
 npm test
 
 # Production build bundle validation

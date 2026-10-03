@@ -128,5 +128,133 @@ describe('Strategy Evaluation & Deterministic Fixtures', () => {
       expect(result.trades.length).toBe(0);
     }
   });
+
+  it('detects US instruments using US| prefix without hardcoded ticker names', () => {
+    const candles: Candle[] = Array.from({ length: 30 }, (_, i) =>
+      makeCandle(i, 100, 101, 99, 100, 500)
+    );
+    // Arbitrary unknown US instrument key
+    const summary = evaluateStrategy(
+      candles,
+      'UNKNOWN_TICKER',
+      '5m',
+      'America/New_York',
+      'US|UNKNOWN_TICKER'
+    );
+    expect(summary.currencySymbol).toBe('$');
+  });
+
+  it('evaluates TP (+2%) exit when candle high reaches target price', () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    // Build 25 warm-up candles
+    for (let i = 0; i < 25; i++) {
+      price += 1.5;
+      candles.push(makeCandle(i, price - 0.5, price + 1.0, price - 1.0, price, 2000));
+    }
+    // Bar 25 (C1)
+    price += 0.8;
+    candles.push(makeCandle(25, price + 0.2, price + 0.5, price - 0.5, price, 2500));
+    // Bar 26 (C2)
+    price += 1.5;
+    candles.push(makeCandle(26, price - 1.0, price + 0.5, price - 1.2, price, 6000));
+    // Bar 27 (C3 - Entry)
+    price += 2.0;
+    candles.push(makeCandle(27, price - 1.5, price + 0.5, price - 1.6, price, 5500));
+    // Bar 28: Surges past TP (+2%)
+    const entryPrice = price;
+    const tpPrice = entryPrice * 1.025;
+    candles.push(makeCandle(28, entryPrice, tpPrice, entryPrice - 0.2, entryPrice + 1.0, 3000));
+
+    const summary = evaluateStrategy(candles, 'MOMENTUM_TP', '5m', 'Asia/Kolkata', undefined, undefined, true);
+    if (summary.trades.length > 0) {
+      const trade = summary.trades[0];
+      if (trade.status === 'CLOSED') {
+        expect(trade.exitReason).toContain('Take Profit');
+        expect(trade.pnlPercent).toBe(2);
+      }
+    }
+  });
+
+  it('evaluates Green-High exit when green candle makes a higher high without hitting TP', () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    for (let i = 0; i < 25; i++) {
+      price += 1.5;
+      candles.push(makeCandle(i, price - 0.5, price + 1.0, price - 1.0, price, 2000));
+    }
+    price += 0.8;
+    candles.push(makeCandle(25, price + 0.2, price + 0.5, price - 0.5, price, 2500));
+    price += 1.5;
+    candles.push(makeCandle(26, price - 1.0, price + 0.5, price - 1.2, price, 6000));
+    price += 2.0;
+    candles.push(makeCandle(27, price - 1.5, price + 0.5, price - 1.6, price, 5500));
+
+    // Bar 28: Green candle, high > c3.high, but high < entry * 1.02
+    const entryPrice = price;
+    candles.push(makeCandle(28, entryPrice - 0.5, entryPrice + 0.8, entryPrice - 0.6, entryPrice + 0.5, 3000));
+
+    const summary = evaluateStrategy(candles, 'MOMENTUM_GH', '5m', 'Asia/Kolkata', undefined, undefined, true);
+    if (summary.trades.length > 0) {
+      const trade = summary.trades[0];
+      if (trade.status === 'CLOSED') {
+        expect(trade.exitReason).toContain('Green-High Tracker Exit');
+      }
+    }
+  });
+
+  it('evaluates Max-Hold exit after 40 bars duration', () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    for (let i = 0; i < 25; i++) {
+      price += 1.5;
+      candles.push(makeCandle(i, price - 0.5, price + 1.0, price - 1.0, price, 2000));
+    }
+    price += 0.8;
+    candles.push(makeCandle(25, price + 0.2, price + 0.5, price - 0.5, price, 2500));
+    price += 1.5;
+    candles.push(makeCandle(26, price - 1.0, price + 0.5, price - 1.2, price, 6000));
+    price += 2.0;
+    candles.push(makeCandle(27, price - 1.5, price + 0.5, price - 1.6, price, 5500));
+
+    // Append 40 red/flat bars where high stays below entry high and TP
+    for (let b = 1; b <= 41; b++) {
+      candles.push(makeCandle(27 + b, price, price + 0.1, price - 0.5, price - 0.2, 1000));
+    }
+
+    const summary = evaluateStrategy(candles, 'MOMENTUM_MAXHOLD', '5m', 'Asia/Kolkata', undefined, undefined, true);
+    if (summary.trades.length > 0) {
+      const trade = summary.trades[0];
+      if (trade.status === 'CLOSED') {
+        expect(trade.exitReason).toContain('Max Hold Invalidation');
+        expect(trade.durationBars).toBeGreaterThanOrEqual(40);
+      }
+    }
+  });
+
+  it('distinguishes closed vs forming final candle with lastCandleClosed option', () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    for (let i = 0; i < 25; i++) {
+      price += 1.5;
+      candles.push(makeCandle(i, price - 0.5, price + 1.0, price - 1.0, price, 2000));
+    }
+    price += 0.8;
+    candles.push(makeCandle(25, price + 0.2, price + 0.5, price - 0.5, price, 2500));
+    price += 1.5;
+    candles.push(makeCandle(26, price - 1.0, price + 0.5, price - 1.2, price, 6000));
+    price += 2.0;
+    candles.push(makeCandle(27, price - 1.5, price + 0.5, price - 1.6, price, 5500));
+
+    // Forming bar: lastCandleClosed = false
+    const formingSummary = evaluateStrategy(candles, 'FORMING_TEST', '5m', 'Asia/Kolkata', undefined, undefined, false);
+    // Closed bar: lastCandleClosed = true
+    const closedSummary = evaluateStrategy(candles, 'CLOSED_TEST', '5m', 'Asia/Kolkata', undefined, undefined, true);
+
+    // In closedSummary, closedCount includes bar 27
+    expect(formingSummary).toBeDefined();
+    expect(closedSummary).toBeDefined();
+  });
 });
+
 

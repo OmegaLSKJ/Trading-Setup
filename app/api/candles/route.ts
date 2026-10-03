@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchCandleRange, UpstoxApiError } from '@/lib/upstox-service';
 import { Timeframe, Candle, CandleResponse } from '@/lib/types';
+import { allowApiRequest } from '@/lib/api-rate-limit';
 import {
   isValidCalendarDate,
   dateStringToUtcSeconds,
   calendarDaysBetween,
   formatDateYYYYMMDD,
+  MAX_SPAN_DAYS_DAILY,
 } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
@@ -30,8 +32,13 @@ const candleCache = new Map<string, CachedData>();
 const CACHE_TTL_MS = 15_000;
 const MAX_CACHE_ENTRIES = 200;
 
-// Single-flight in-progress fetch tracker
-const inFlightFetches = new Map<string, Promise<CandleResponse>>();
+// Shared single-flight structure with reference counting and dedicated AbortController
+interface SharedFlight {
+  controller: AbortController;
+  promise: Promise<CandleResponse>;
+  subscribers: number;
+}
+const inFlightFetches = new Map<string, SharedFlight>();
 
 function aggregateCandles(candles: Candle[], targetIntervalSec: number): Candle[] {
   if (candles.length === 0) return [];
@@ -74,6 +81,15 @@ function aggregateCandles(candles: Candle[], targetIntervalSec: number): Candle[
 }
 
 export async function GET(request: NextRequest) {
+  // 1. Ingress rate limit check
+  const allowed = allowApiRequest(request, 'candles', 120);
+  if (!allowed) {
+    return NextResponse.json(
+      { success: false, error: 'Rate limit exceeded. Please slow down your requests.', candles: [] },
+      { status: 429 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const instrumentKey = searchParams.get('instrumentKey');
   const rawTimeframe = searchParams.get('timeframe');
@@ -81,7 +97,7 @@ export async function GET(request: NextRequest) {
   let to = searchParams.get('to');
   const includeIntraday = searchParams.get('includeIntraday') !== 'false';
 
-  // 1. Validate instrumentKey
+  // 2. Validate instrumentKey
   if (!instrumentKey || instrumentKey.trim() === '') {
     return NextResponse.json(
       { success: false, error: 'Missing required parameter: instrumentKey', candles: [] },
@@ -89,7 +105,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 2. Validate timeframe strictly without fallback casting
+  if (instrumentKey.length > 100) {
+    return NextResponse.json(
+      { success: false, error: 'Invalid instrument key: exceeds maximum length of 100 characters.', candles: [] },
+      { status: 400 }
+    );
+  }
+
+  // 3. Validate timeframe strictly without fallback casting
   if (!rawTimeframe || !ALLOWED_TIMEFRAMES.has(rawTimeframe as Timeframe)) {
     return NextResponse.json(
       {
@@ -102,7 +125,7 @@ export async function GET(request: NextRequest) {
   }
   const timeframe = rawTimeframe as Timeframe;
 
-  // 3. Default dates if omitted: past 30 days for minute charts, 1 year for daily
+  // 4. Default dates if omitted: past 30 days for minute charts, 1 year for daily
   const today = new Date();
   if (!to) {
     to = formatDateYYYYMMDD(today);
@@ -117,7 +140,7 @@ export async function GET(request: NextRequest) {
     from = formatDateYYYYMMDD(fromDate);
   }
 
-  // 4. Strict calendar date validation
+  // 5. Strict calendar date validation
   if (!isValidCalendarDate(from)) {
     return NextResponse.json(
       { success: false, error: `Invalid 'from' date format or calendar date: ${from}`, candles: [] },
@@ -131,7 +154,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 5. Date order validation
+  // 6. Date order validation
   if (from > to) {
     return NextResponse.json(
       { success: false, error: `'from' date (${from}) cannot be after 'to' date (${to})`, candles: [] },
@@ -139,13 +162,24 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 6. Span limits per timeframe
+  // 7. Span limits per timeframe
   const totalDays = calendarDaysBetween(from, to);
   if (timeframe !== '1D' && totalDays > 366) {
     return NextResponse.json(
       {
         success: false,
         error: `Requested range (${totalDays} days) exceeds maximum allowed span of 366 days for intraday timeframes.`,
+        candles: [],
+      },
+      { status: 400 }
+    );
+  }
+
+  if (timeframe === '1D' && totalDays > MAX_SPAN_DAYS_DAILY) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Requested range (${totalDays} days) exceeds maximum allowed span of ${MAX_SPAN_DAYS_DAILY} days for daily timeframe.`,
         candles: [],
       },
       { status: 400 }
@@ -169,11 +203,14 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Single-flight deduplication
-  let fetchPromise = inFlightFetches.get(cacheKey);
-  if (!fetchPromise) {
-    fetchPromise = (async (): Promise<CandleResponse> => {
-      // US Stocks via Yahoo Finance
+  // Single-flight deduplication with reference counting and dedicated AbortController
+  let flight = inFlightFetches.get(cacheKey);
+  if (!flight) {
+    const flightController = new AbortController();
+    const flightSignal = flightController.signal;
+
+    const promise = (async (): Promise<CandleResponse> => {
+      // US Stocks via Yahoo Finance (with 10-second deadline)
       if (instrumentKey.startsWith('US|')) {
         const ticker = instrumentKey.replace('US|', '').toUpperCase();
         let yInterval = '5m';
@@ -218,9 +255,12 @@ export async function GET(request: NextRequest) {
           ticker
         )}?interval=${yInterval}&period1=${period1}&period2=${period2}`;
 
+        const timeoutSignal = AbortSignal.timeout(10000);
+        const combinedSignal = flightSignal.aborted ? flightSignal : timeoutSignal;
+
         const yRes = await fetch(yUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-          signal: request.signal,
+          signal: combinedSignal,
         });
 
         if (!yRes.ok) {
@@ -246,19 +286,41 @@ export async function GET(request: NextRequest) {
           const h = quote.high?.[i];
           const l = quote.low?.[i];
           const c = quote.close?.[i];
-          const v = quote.volume?.[i] || 0;
+          const v = quote.volume?.[i];
 
-          if (o !== null && h !== null && l !== null && c !== null && !isNaN(o)) {
-            parsedCandles.push({
-              time: t,
-              timeString: new Date(t * 1000).toISOString(),
-              open: Number(Number(o).toFixed(2)),
-              high: Number(Number(h).toFixed(2)),
-              low: Number(Number(l).toFixed(2)),
-              close: Number(Number(c).toFixed(2)),
-              volume: Number(v) || 0,
-            });
+          // Reject null or non-finite OHLC values without converting to zero
+          if (
+            o === null || o === undefined ||
+            h === null || h === undefined ||
+            l === null || l === undefined ||
+            c === null || c === undefined
+          ) {
+            continue;
           }
+
+          const openNum = Number(o);
+          const highNum = Number(h);
+          const lowNum = Number(l);
+          const closeNum = Number(c);
+
+          if (
+            !Number.isFinite(openNum) ||
+            !Number.isFinite(highNum) ||
+            !Number.isFinite(lowNum) ||
+            !Number.isFinite(closeNum)
+          ) {
+            continue;
+          }
+
+          parsedCandles.push({
+            time: t,
+            timeString: new Date(t * 1000).toISOString(),
+            open: Number(openNum.toFixed(2)),
+            high: Number(highNum.toFixed(2)),
+            low: Number(lowNum.toFixed(2)),
+            close: Number(closeNum.toFixed(2)),
+            volume: Number.isFinite(Number(v)) ? Number(v) : 0,
+          });
         }
 
         parsedCandles.sort((a, b) => a.time - b.time);
@@ -279,7 +341,7 @@ export async function GET(request: NextRequest) {
         from,
         to,
         includeIntraday,
-        request.signal
+        flightSignal
       );
 
       return {
@@ -288,13 +350,39 @@ export async function GET(request: NextRequest) {
         partial: result.partial,
         failedRanges: result.failedRanges,
       };
-    })();
+    })().finally(() => {
+      inFlightFetches.delete(cacheKey);
+    });
 
-    inFlightFetches.set(cacheKey, fetchPromise);
+    flight = {
+      controller: flightController,
+      promise,
+      subscribers: 0,
+    };
+    inFlightFetches.set(cacheKey, flight);
   }
 
+  flight.subscribers++;
+
   try {
-    const result = await fetchPromise;
+    if (request.signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
+    const result = await new Promise<CandleResponse>((resolve, reject) => {
+      const onAbort = () => reject(new Error('Request aborted'));
+      request.signal.addEventListener('abort', onAbort, { once: true });
+
+      flight!.promise
+        .then((res) => {
+          request.signal.removeEventListener('abort', onAbort);
+          resolve(res);
+        })
+        .catch((err) => {
+          request.signal.removeEventListener('abort', onAbort);
+          reject(err);
+        });
+    });
 
     // Cache ONLY complete successful results (never cache partial responses)
     if (result.success && !result.partial && result.candles.length > 0) {
@@ -334,6 +422,10 @@ export async function GET(request: NextRequest) {
       { status: status >= 400 && status < 600 ? status : 500 }
     );
   } finally {
-    inFlightFetches.delete(cacheKey);
+    flight.subscribers--;
+    if (flight.subscribers <= 0) {
+      flight.controller.abort();
+      inFlightFetches.delete(cacheKey);
+    }
   }
 }

@@ -175,7 +175,7 @@ export function calculateDPO(candles: Candle[], period = 20): IndicatorPoint[] {
  */
 export function calculateADX(candles: Candle[], period = 14): IndicatorPoint[] {
   const n = candles.length;
-  if (n <= period * 2) return [];
+  if (n < period * 2 - 1) return [];
 
   const tr: number[] = new Array(n).fill(0);
   const plusDM: number[] = new Array(n).fill(0);

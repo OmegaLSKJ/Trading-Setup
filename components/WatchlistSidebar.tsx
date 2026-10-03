@@ -62,7 +62,7 @@ export const WatchlistSidebar: React.FC = () => {
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => openSymbolSearch()}
+                onClick={() => openSymbolSearch('WATCHLIST_ONLY')}
                 className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 cursor-pointer"
                 title="Add symbol to watchlist"
               >
@@ -154,6 +154,7 @@ export const WatchlistSidebar: React.FC = () => {
                   role="button"
                   onClick={() => handleSelectSymbol(item)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       handleSelectSymbol(item);
@@ -205,14 +206,14 @@ export const WatchlistSidebar: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    {/* Explicit Add to Grid Button on hover */}
+                    {/* Explicit Add to Grid Button on hover / focus-visible */}
                     {!isOpenInAnyChart && charts.length < 6 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           addChart(item);
                         }}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-emerald-300 hover:bg-slate-800 rounded transition-all cursor-pointer"
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 p-1 text-slate-400 hover:text-emerald-300 hover:bg-slate-800 rounded transition-all cursor-pointer"
                         title={`Add ${item.trading_symbol} as new chart in grid (${charts.length + 1}/6)`}
                       >
                         <Plus className="w-3.5 h-3.5 text-emerald-400" />
@@ -224,7 +225,7 @@ export const WatchlistSidebar: React.FC = () => {
                         e.stopPropagation();
                         removeFromWatchlist(item.instrument_key);
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 rounded transition-opacity cursor-pointer"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 p-1 text-slate-500 hover:text-rose-400 rounded transition-all cursor-pointer"
                       title="Remove from watchlist"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -246,7 +247,7 @@ export const WatchlistSidebar: React.FC = () => {
           {/* Quick Add helper button */}
           <div className="p-2 border-t border-slate-800 bg-[#0f172a]">
             <button
-              onClick={() => openSymbolSearch()}
+              onClick={() => openSymbolSearch('WATCHLIST_ONLY')}
               className="w-full flex items-center justify-center gap-1.5 py-1 px-2 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-xs font-medium transition-colors cursor-pointer"
             >
               <Plus className="w-3 h-3" />

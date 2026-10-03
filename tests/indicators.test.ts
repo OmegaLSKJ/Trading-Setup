@@ -40,6 +40,29 @@ describe('Indicator Calculations & Fixture Traces', () => {
     expect(adxPoints[0].time).toBe(candles[26].time);
   });
 
+  it('calculates ADX correctly for exact boundaries: 27, 28, and 29 candles', () => {
+    const candles27 = createMockCandles(27);
+    const adx27 = calculateADX(candles27, 14);
+    // 27 candles (index 0 to 26): exactly 1 point at index 26
+    expect(adx27.length).toBe(1);
+    expect(adx27[0].time).toBe(candles27[26].time);
+
+    const candles28 = createMockCandles(28);
+    const adx28 = calculateADX(candles28, 14);
+    // 28 candles (index 0 to 27): exactly 2 points
+    expect(adx28.length).toBe(2);
+    expect(adx28[0].time).toBe(candles28[26].time);
+    expect(adx28[1].time).toBe(candles28[27].time);
+
+    const candles29 = createMockCandles(29);
+    const adx29 = calculateADX(candles29, 14);
+    // 29 candles (index 0 to 28): exactly 3 points
+    expect(adx29.length).toBe(3);
+    expect(adx29[0].time).toBe(candles29[26].time);
+    expect(adx29[1].time).toBe(candles29[27].time);
+    expect(adx29[2].time).toBe(candles29[28].time);
+  });
+
   it('preserves valid zero ADX values and does not drop them', () => {
     // Perfectly flat candles: high = low = close = 100
     const flatCandles: Candle[] = Array.from({ length: 40 }, (_, i) => ({

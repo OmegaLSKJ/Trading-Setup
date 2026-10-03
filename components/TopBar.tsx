@@ -105,8 +105,21 @@ export const TopBar: React.FC = () => {
       }
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsLayoutDropdownOpen(false);
+        setIsStatusPopoverOpen(false);
+        setIsTimezoneDropdownOpen(false);
+        setIsMarketMenuOpen(false);
+      }
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   // Poll health endpoint periodically with an in-flight guard
@@ -264,7 +277,15 @@ export const TopBar: React.FC = () => {
         </button>
 
         {/* Layout Mode Selector Dropdown */}
-        <div ref={layoutMenuRef} className="relative">
+        <div
+          ref={layoutMenuRef}
+          className="relative"
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsLayoutDropdownOpen(false);
+            }
+          }}
+        >
           <button
             onClick={() => {
               setIsLayoutDropdownOpen((prev) => !prev);
@@ -272,6 +293,9 @@ export const TopBar: React.FC = () => {
               setIsTimezoneDropdownOpen(false);
               setIsMarketMenuOpen(false);
             }}
+            aria-expanded={isLayoutDropdownOpen}
+            aria-controls="topbar-layout-menu"
+            aria-haspopup="true"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 hover:text-white transition-all cursor-pointer shadow-xs"
             title="Choose grid layout (Max 6 charts)"
           >
@@ -282,6 +306,7 @@ export const TopBar: React.FC = () => {
 
           {isLayoutDropdownOpen && (
             <div
+              id="topbar-layout-menu"
               onClick={() => setIsLayoutDropdownOpen(false)}
               className="absolute right-0 top-full mt-1.5 w-60 bg-[#162032] border border-slate-700/90 rounded-lg shadow-2xl p-1.5 z-50 text-xs backdrop-blur-md"
             >
@@ -384,7 +409,15 @@ export const TopBar: React.FC = () => {
           const mcxStatus = getMCXMarketStatus(currentDate);
 
           return (
-            <div ref={marketMenuRef} className="relative">
+            <div
+              ref={marketMenuRef}
+              className="relative"
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                  setIsMarketMenuOpen(false);
+                }
+              }}
+            >
               <button
                 onClick={() => {
                   setIsMarketMenuOpen((prev) => !prev);
@@ -392,6 +425,9 @@ export const TopBar: React.FC = () => {
                   setIsLayoutDropdownOpen(false);
                   setIsStatusPopoverOpen(false);
                 }}
+                aria-expanded={isMarketMenuOpen}
+                aria-controls="topbar-market-menu"
+                aria-haspopup="true"
                 className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-mono font-medium transition-all cursor-pointer ${
                   activeStatus.isOpen
                     ? 'bg-emerald-950/80 hover:bg-emerald-900/90 border-emerald-500/40 text-emerald-400'
@@ -424,6 +460,7 @@ export const TopBar: React.FC = () => {
               {/* Global Markets & Active Instrument Overview Popover */}
               {isMarketMenuOpen && (
                 <div
+                  id="topbar-market-menu"
                   className="absolute right-0 mt-1.5 w-80 bg-[#0d1322] border border-slate-700/90 rounded-lg shadow-2xl z-50 p-3"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -570,7 +607,15 @@ export const TopBar: React.FC = () => {
         })()}
 
         {/* Global Timezone Switcher */}
-        <div ref={timezoneMenuRef} className="relative">
+        <div
+          ref={timezoneMenuRef}
+          className="relative"
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsTimezoneDropdownOpen(false);
+            }
+          }}
+        >
           <button
             onClick={() => {
               setIsTimezoneDropdownOpen((prev) => !prev);
@@ -578,6 +623,9 @@ export const TopBar: React.FC = () => {
               setIsStatusPopoverOpen(false);
               setIsMarketMenuOpen(false);
             }}
+            aria-expanded={isTimezoneDropdownOpen}
+            aria-controls="topbar-timezone-menu"
+            aria-haspopup="true"
             className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
             title={`Chart Timezone: ${currentTimezoneOpt.label} (${currentTimezoneOpt.offset})`}
           >
@@ -590,6 +638,7 @@ export const TopBar: React.FC = () => {
 
           {isTimezoneDropdownOpen && (
             <div
+              id="topbar-timezone-menu"
               className="absolute right-0 mt-1.5 w-64 bg-[#0d1322] border border-slate-700/80 rounded-lg shadow-2xl z-50 py-1 max-h-80 overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
@@ -630,7 +679,15 @@ export const TopBar: React.FC = () => {
         </div>
 
         {/* Connection Status Badge */}
-        <div ref={statusMenuRef} className="relative">
+        <div
+          ref={statusMenuRef}
+          className="relative"
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsStatusPopoverOpen(false);
+            }
+          }}
+        >
           <button
             onClick={() => {
               setIsStatusPopoverOpen((prev) => !prev);
@@ -638,6 +695,9 @@ export const TopBar: React.FC = () => {
               setIsTimezoneDropdownOpen(false);
               setIsMarketMenuOpen(false);
             }}
+            aria-expanded={isStatusPopoverOpen}
+            aria-controls="topbar-status-popover"
+            aria-haspopup="true"
             className={`flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-semibold tracking-wider transition-colors cursor-pointer ${
               connectionStatus === 'CONNECTED'
                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
@@ -684,6 +744,7 @@ export const TopBar: React.FC = () => {
           {/* Technical Status Popover */}
           {isStatusPopoverOpen && (
             <div
+              id="topbar-status-popover"
               onClick={() => setIsStatusPopoverOpen(false)}
               className="absolute right-0 top-full mt-2 w-64 bg-[#1e293b] border border-slate-700 rounded shadow-2xl p-3 z-50 text-xs text-slate-200"
             >

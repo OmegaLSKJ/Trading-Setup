@@ -276,7 +276,7 @@ const POPULAR_INSTRUMENTS: Instrument[] = [
   },
 ];
 
-class InstrumentMasterService {
+export class InstrumentMasterService {
   private instruments: Instrument[] = [...POPULAR_INSTRUMENTS];
   private keyMap: Map<string, Instrument> = new Map();
   private symbolMap: Map<string, Instrument[]> = new Map();
@@ -315,11 +315,16 @@ class InstrumentMasterService {
     return { keyMap, symbolMap };
   }
 
-  private atomicReplace(list: Instrument[]) {
+  public atomicReplace(list: Instrument[]) {
     const { keyMap, symbolMap } = this.buildIndex(list);
     this.keyMap = keyMap;
     this.symbolMap = symbolMap;
     this.instruments = list;
+  }
+
+  public setLastLoadTimeForTesting(time: number) {
+    this.lastLoadTime = time;
+    this.isLoaded = true;
   }
 
   public async initMaster(forceRefresh = false): Promise<void> {
@@ -359,7 +364,7 @@ class InstrumentMasterService {
           }
         }
 
-        // 2. Fetch NSE master from Upstox assets with timeout
+        // 2. Fetch NSE master from Upstox assets with timeout and size bounds
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000);
 
@@ -376,9 +381,36 @@ class InstrumentMasterService {
             throw new Error(`Failed to fetch Upstox instrument master: HTTP ${response.status}`);
           }
 
-          const arrayBuffer = await response.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-          const decompressed = await gunzipAsync(buffer);
+          const contentLength = response.headers.get('content-length');
+          if (contentLength && parseInt(contentLength, 10) > 30 * 1024 * 1024) {
+            throw new Error('Instrument master download exceeded size limit (30MB)');
+          }
+
+          if (!response.body) {
+            throw new Error('Response body is null');
+          }
+
+          const reader = response.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let totalBytes = 0;
+          const MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024; // 30MB cap
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              totalBytes += value.byteLength;
+              if (totalBytes > MAX_DOWNLOAD_BYTES) {
+                controller.abort();
+                throw new Error('Instrument master download exceeded size limit (30MB)');
+              }
+              chunks.push(value);
+            }
+          }
+
+          const buffer = Buffer.concat(chunks);
+          // Decompression limit: max 150MB uncompressed to guard against zip bombs
+          const decompressed = await gunzipAsync(buffer, { maxOutputLength: 150 * 1024 * 1024 });
           const rawList: Record<string, unknown>[] = JSON.parse(decompressed.toString('utf-8'));
 
           // Filter and map to clean Instrument structures
@@ -438,6 +470,13 @@ class InstrumentMasterService {
   public async search(query: string, limit = 30): Promise<Instrument[]> {
     const q = (query || '').trim().slice(0, 60).toUpperCase();
 
+    // Check if loaded master is stale (> 24h) and trigger background refresh while serving current data
+    const now = Date.now();
+    const isStale = this.isLoaded && (now - this.lastLoadTime >= 24 * 60 * 60 * 1000);
+    if (isStale && !this.isLoading) {
+      this.initMaster(true).catch(() => {});
+    }
+
     // If query is for a non-seeded symbol and master is not loaded, bounded wait (max 1.2s)
     const isSeededMatch = POPULAR_INSTRUMENTS.some(
       (p) => p.trading_symbol.toUpperCase().includes(q) || p.name.toUpperCase().includes(q)
@@ -458,6 +497,12 @@ class InstrumentMasterService {
     }
 
     const exactSymbolMatches: Instrument[] = [];
+    // Seed exact symbol matches directly from symbolMap to guarantee ranking preservation
+    const indexedExact = this.symbolMap.get(q) || [];
+    for (const inst of indexedExact) {
+      exactSymbolMatches.push(inst);
+    }
+
     const prefixSymbolMatches: Instrument[] = [];
     const containsSymbolMatches: Instrument[] = [];
     const nameMatches: Instrument[] = [];
@@ -467,7 +512,9 @@ class InstrumentMasterService {
       const name = (inst.name || '').toUpperCase();
 
       if (sym === q) {
-        exactSymbolMatches.push(inst);
+        if (!exactSymbolMatches.some((e) => e.instrument_key === inst.instrument_key)) {
+          exactSymbolMatches.push(inst);
+        }
       } else if (sym.startsWith(q)) {
         prefixSymbolMatches.push(inst);
       } else if (sym.includes(q)) {

@@ -17,7 +17,7 @@ import {
   IPriceLine,
 } from 'lightweight-charts';
 
-import { Candle, IndicatorConfig, Timeframe } from '@/lib/types';
+import { Candle, IndicatorConfig, Timeframe, LiveTick } from '@/lib/types';
 import {
   calculateEMA,
   calculateVWAP,
@@ -32,12 +32,12 @@ import { evaluateStrategy, StrategySummary } from '@/lib/strategy';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { liveStreamManager } from '@/lib/live-stream';
 import { getIndianMarketStatus, getUSMarketStatus } from '@/lib/market-hours';
-import { formatDateTimeWithZone, formatTickMark, DEFAULT_TIMEZONE } from '@/lib/timezones';
+import { formatDateTimeWithZone, formatTickMark, DEFAULT_TIMEZONE, getTimezoneOffsetSeconds } from '@/lib/timezones';
 
 
 export interface CandlestickChartHandle {
   resetScale: () => void;
-  scrollToTime: (unixSec: number) => void;
+  scrollToTime: (unixSec: number) => boolean;
   panVertical?: (deltaPx: number) => void;
 }
 
@@ -61,43 +61,37 @@ interface Props {
 }
 
 function getSessionAlignedBarStartTime(tickTimestamp: number, tf: Timeframe, isUS: boolean): number {
+  const tz = isUS ? 'America/New_York' : 'Asia/Kolkata';
+  const tzOffsetSec = getTimezoneOffsetSeconds(tickTimestamp, tz);
+
   if (tf === '1h') {
     if (!isUS) {
       // Indian exchange: session starts at 09:15 IST (UTC+5:30 -> 19800 sec offset)
-      // 09:15 IST is 33300 seconds from IST midnight
-      const istTime = tickTimestamp + 19800;
+      const istTime = tickTimestamp + tzOffsetSec;
       const istMidnight = Math.floor(istTime / 86400) * 86400;
       const sessionStartIST = istMidnight + (9 * 3600 + 15 * 60);
       if (istTime >= sessionStartIST) {
         const hoursPassed = Math.floor((istTime - sessionStartIST) / 3600);
-        return sessionStartIST + hoursPassed * 3600 - 19800;
+        return sessionStartIST + hoursPassed * 3600 - tzOffsetSec;
       }
       return Math.floor(tickTimestamp / 3600) * 3600;
     } else {
-      // US exchange: session starts at 09:30 ET
-      const etTime = tickTimestamp - 18000;
+      // US exchange: session starts at 09:30 ET using DST-aware offset
+      const etTime = tickTimestamp + tzOffsetSec;
       const etMidnight = Math.floor(etTime / 86400) * 86400;
       const sessionStartET = etMidnight + (9 * 3600 + 30 * 60);
       if (etTime >= sessionStartET) {
         const hoursPassed = Math.floor((etTime - sessionStartET) / 3600);
-        return sessionStartET + hoursPassed * 3600 + 18000;
+        return sessionStartET + hoursPassed * 3600 - tzOffsetSec;
       }
       return Math.floor(tickTimestamp / 3600) * 3600;
     }
   }
 
   if (tf === '1D') {
-    if (!isUS) {
-      // Align to IST date midnight
-      const istTime = tickTimestamp + 19800;
-      const istMidnight = Math.floor(istTime / 86400) * 86400;
-      return istMidnight - 19800;
-    } else {
-      // Align to US ET date midnight
-      const etTime = tickTimestamp - 18000;
-      const etMidnight = Math.floor(etTime / 86400) * 86400;
-      return etMidnight + 18000;
-    }
+    const localTime = tickTimestamp + tzOffsetSec;
+    const localMidnight = Math.floor(localTime / 86400) * 86400;
+    return localMidnight - tzOffsetSec;
   }
 
   // Intraday standard minute bucketing
@@ -150,6 +144,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     // Active mutable candles in memory for real-time live ticking
     const activeCandlesRef = useRef<Candle[]>([]);
     const isSyncingRange = useRef(false);
+    const rangeSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastStrategyRunTimeRef = useRef<number>(0);
     const strategyPendingTimerRef = useRef<NodeJS.Timeout | null>(null);
     const lastIndicatorCalcTimeRef = useRef<number>(0);
@@ -162,6 +157,12 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
     const indicatorsRef = useRef(indicators);
     indicatorsRef.current = indicators;
+
+    const onCrosshairMoveRef = useRef(onCrosshairMove);
+    onCrosshairMoveRef.current = onCrosshairMove;
+
+    const chartIdRef = useRef(chartId);
+    chartIdRef.current = chartId;
 
     const syncSettings = useDashboardStore((s) => s.syncSettings);
     const syncSettingsRef = useRef(syncSettings);
@@ -221,10 +222,10 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           // ignore
         }
       },
-      scrollToTime: (unixSec: number) => {
-        if (!chartApiRef.current || !activeCandlesRef.current) return;
+      scrollToTime: (unixSec: number): boolean => {
+        if (!chartApiRef.current || !activeCandlesRef.current) return false;
         const list = activeCandlesRef.current;
-        if (list.length === 0) return;
+        if (list.length === 0) return false;
 
         let closestIdx = -1;
         let minDiff = Infinity;
@@ -241,7 +242,9 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             from: Math.max(0, closestIdx - 15),
             to: Math.min(list.length - 1 + 8, closestIdx + 20),
           });
+          return true;
         }
+        return false;
       },
     }));
 
@@ -266,7 +269,15 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       if (currentIndicators.strategy && list && list.length >= 15) {
         try {
-          const summary = evaluateStrategy(list, tradingSymbol, timeframe);
+          const summary = evaluateStrategy(
+            list,
+            tradingSymbol,
+            timeframe,
+            selectedTimezoneRef.current,
+            instrumentKey,
+            undefined,
+            isLiveDisabled
+          );
           const chartMarkers = summary.markers.map((m) => ({
             time: m.time as unknown as Time,
             position: m.position,
@@ -305,7 +316,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           });
         }
       }
-    }, [tradingSymbol, timeframe]);
+    }, [tradingSymbol, timeframe, instrumentKey, isLiveDisabled]);
 
 
 
@@ -446,7 +457,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
           setHoverData(null);
           setHoverIndicators(null);
-          if (onCrosshairMove) onCrosshairMove(null);
+          if (onCrosshairMoveRef.current) onCrosshairMoveRef.current(null);
           return;
         }
 
@@ -477,8 +488,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
           const histSnap = candleIndicatorsMap.current.get(timeNum);
           setHoverIndicators(histSnap || null);
 
-          if (onCrosshairMove) {
-            onCrosshairMove({
+          if (onCrosshairMoveRef.current) {
+            onCrosshairMoveRef.current({
               time: timeNum,
               timeString: timeStr,
               open: candleData.open,
@@ -492,7 +503,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
         // Sync crosshair across charts
         if (syncSettingsRef.current.crosshair) {
-          chartSyncBus.emitCrosshair(chartId, Number(param.time), param.point);
+          chartSyncBus.emitCrosshair(chartIdRef.current, Number(param.time), param.point);
         }
       });
 
@@ -500,18 +511,18 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       const handlePointerLeave = () => {
         setHoverData(null);
         setHoverIndicators(null);
-        if (onCrosshairMove) {
-          onCrosshairMove(null);
+        if (onCrosshairMoveRef.current) {
+          onCrosshairMoveRef.current(null);
         }
         if (syncSettingsRef.current.crosshair) {
-          chartSyncBus.emitCrosshair(chartId, null, null);
+          chartSyncBus.emitCrosshair(chartIdRef.current, null, null);
         }
       };
       container.addEventListener('pointerleave', handlePointerLeave);
 
       // Subscribe to remote crosshair events from other charts
       const unsubCrosshair = chartSyncBus.subscribeCrosshair((srcId, time) => {
-        if (srcId === chartId || !chartApiRef.current || !syncSettingsRef.current.crosshair) return;
+        if (srcId === chartIdRef.current || !chartApiRef.current || !syncSettingsRef.current.crosshair) return;
 
 
         try {
@@ -539,7 +550,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         if (!logicalRange || isSyncingRange.current || !syncSettingsRef.current.timeRange) return;
         const timeRange = chart.timeScale().getVisibleRange();
         if (timeRange && typeof timeRange.from === 'number' && typeof timeRange.to === 'number') {
-          chartSyncBus.emitTimeRange(chartId, timeRange.from, timeRange.to);
+          chartSyncBus.emitTimeRange(chartIdRef.current, timeRange.from, timeRange.to);
         }
       });
 
@@ -642,6 +653,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       resizeObserver.observe(container);
 
       return () => {
+        container.removeEventListener('pointerleave', handlePointerLeave);
         container.removeEventListener('pointerdown', handlePointerDown);
         container.removeEventListener('contextmenu', handleContextMenu);
         container.removeEventListener('dblclick', handleDblClick);
@@ -700,7 +712,8 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         } catch {
           // ignore
         } finally {
-          setTimeout(() => {
+          if (rangeSyncTimerRef.current) clearTimeout(rangeSyncTimerRef.current);
+          rangeSyncTimerRef.current = setTimeout(() => {
             isSyncingRange.current = false;
           }, 50);
         }
@@ -708,6 +721,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
 
       return () => {
         unsubTime();
+        if (rangeSyncTimerRef.current) clearTimeout(rangeSyncTimerRef.current);
       };
     }, [chartId, syncSettings.timeRange]);
 
@@ -746,10 +760,16 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         }
       }
 
-      // Deep copy candles to mutable active list
-      activeCandlesRef.current = candles.map((c) => ({ ...c }));
+      // Retain live bars at or after the last historical timestamp and live bars newer than the cached snapshot
+      const lastHistorical = candles[candles.length - 1];
+      const existingLiveBars = activeCandlesRef.current.filter(
+        (c) => c.time > lastHistorical.time
+      );
 
-      const candleData = candles.map((c) => ({
+      const mergedCandles = [...candles.map((c) => ({ ...c })), ...existingLiveBars];
+      activeCandlesRef.current = mergedCandles;
+
+      const candleData = mergedCandles.map((c) => ({
         time: c.time as unknown as Time,
         open: c.open,
         high: c.high,
@@ -757,7 +777,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         close: c.close,
       }));
 
-      const volumeData = candles.map((c) => {
+      const volumeData = mergedCandles.map((c) => {
         const isUp = c.close >= c.open;
         return {
           time: c.time as unknown as Time,
@@ -783,19 +803,24 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         });
       }
 
-      const last = candles[candles.length - 1];
-      setCurrentLivePrice(last.close);
+      // Do not reset the header price when a newer live price exists
+      if (existingLiveBars.length > 0) {
+        const latestLive = existingLiveBars[existingLiveBars.length - 1];
+        setCurrentLivePrice(latestLive.close);
+      } else {
+        setCurrentLivePrice(lastHistorical.close);
+      }
 
-      // Precalculate indicators across all historical bars for crosshair inspection
-      const ema8List = calculateEMA(candles, 8);
-      const ema16List = calculateEMA(candles, 16);
-      const ema20List = calculateEMA(candles, 20);
-      const ema50List = calculateEMA(candles, 50);
-      const ema200List = calculateEMA(candles, 200);
-      const rsiList = calculateRSI(candles, 14);
-      const vwapList = calculateVWAP(candles);
-      const dpoList = calculateDPO(candles, 20);
-      const adxList = calculateADX(candles, 14);
+      // Precalculate indicators across all historical and retained live bars
+      const ema8List = calculateEMA(mergedCandles, 8);
+      const ema16List = calculateEMA(mergedCandles, 16);
+      const ema20List = calculateEMA(mergedCandles, 20);
+      const ema50List = calculateEMA(mergedCandles, 50);
+      const ema200List = calculateEMA(mergedCandles, 200);
+      const rsiList = calculateRSI(mergedCandles, 14);
+      const vwapList = calculateVWAP(mergedCandles);
+      const dpoList = calculateDPO(mergedCandles, 20);
+      const adxList = calculateADX(mergedCandles, 14);
 
       const ema8Map = new Map(ema8List.map((p) => [p.time, p.value]));
       const ema16Map = new Map(ema16List.map((p) => [p.time, p.value]));
@@ -808,7 +833,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       const adxMap = new Map(adxList.map((p) => [p.time, p.value]));
 
       candleIndicatorsMap.current.clear();
-      candles.forEach((c) => {
+      mergedCandles.forEach((c) => {
         candleIndicatorsMap.current.set(c.time, {
           ema8: ema8Map.get(c.time) ?? c.close,
           ema16: ema16Map.get(c.time) ?? c.close,
@@ -823,7 +848,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         });
       });
 
-      const initialSnap = computeLiveIndicatorsSnapshot(candles);
+      const initialSnap = computeLiveIndicatorsSnapshot(mergedCandles);
       setLiveIndicators(initialSnap);
     }, [candles, instrumentKey, timeframe]);
 
@@ -846,7 +871,10 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     useEffect(() => {
       if (!instrumentKey || isLiveDisabled) return;
 
-      const unsubscribe = liveStreamManager.subscribe(instrumentKey, (tick) => {
+      const unsubscribe = liveStreamManager.subscribe(instrumentKey, (event) => {
+        if (!event || ('type' in event && event.type !== 'TICK')) return;
+        const tick = event as LiveTick;
+        if (typeof tick.price !== 'number' || typeof tick.timestamp !== 'number') return;
 
         // STRICT RULE: Reject any tick updates when quote is MARKET_CLOSED or market is closed
         if (tick.state === 'MARKET_CLOSED') return;
@@ -939,7 +967,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
             });
 
             // 2. Update Volume Histogram on Canvas
-            if (volumeSeriesRef.current && indicators.volume) {
+            if (volumeSeriesRef.current && indicatorsRef.current.volume) {
               volumeSeriesRef.current.update({
                 time: last.time as unknown as Time,
                 value: last.volume,
@@ -1046,6 +1074,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     }, [
       instrumentKey,
       timeframe,
+      isLiveDisabled,
       triggerLiveStrategyEvaluation,
     ]);
 

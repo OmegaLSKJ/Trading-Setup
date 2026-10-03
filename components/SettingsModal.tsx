@@ -101,7 +101,7 @@ export const SettingsModal: React.FC = () => {
           <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider mb-2">
             Auto-Refresh / Polling Mode
           </div>
-          <div className="grid grid-cols-4 gap-2 bg-[#090d16] p-2 rounded border border-slate-800">
+          <div role="radiogroup" aria-label="Auto-refresh polling interval" className="grid grid-cols-4 gap-2 bg-[#090d16] p-2 rounded border border-slate-800">
             {[
               { label: 'OFF (Manual)', value: 0 },
               { label: '10 Seconds', value: 10000 },
@@ -110,6 +110,8 @@ export const SettingsModal: React.FC = () => {
             ].map((opt) => (
               <button
                 key={opt.value}
+                role="radio"
+                aria-checked={autoRefreshInterval === opt.value}
                 onClick={() => setAutoRefreshInterval(opt.value as AutoRefreshInterval)}
                 className={`py-1.5 px-2 rounded text-[11px] font-medium transition-colors cursor-pointer ${
                   autoRefreshInterval === opt.value
@@ -130,11 +132,12 @@ export const SettingsModal: React.FC = () => {
           </div>
           <div className="bg-[#090d16] p-3 rounded border border-slate-800 space-y-2.5 text-slate-300">
             <div className="flex items-center justify-between">
-              <span className="text-slate-400 text-xs flex items-center gap-1.5">
+              <label htmlFor="settings-timezone-select" className="text-slate-400 text-xs flex items-center gap-1.5 cursor-pointer">
                 <Globe className="w-3.5 h-3.5 text-sky-400" />
                 <span>Chart Timezone:</span>
-              </span>
+              </label>
               <select
+                id="settings-timezone-select"
                 value={selectedTimezone || 'Asia/Kolkata'}
                 onChange={(e) => setTimezone(e.target.value)}
                 className="bg-slate-800 text-white border border-slate-700 rounded px-2.5 py-1 text-xs font-mono focus:outline-hidden focus:border-sky-500 cursor-pointer max-w-[240px]"

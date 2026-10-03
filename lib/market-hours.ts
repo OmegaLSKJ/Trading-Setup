@@ -2,9 +2,10 @@
  * Indian Stock Market (NSE / BSE / MCX) & US Market Schedule & Status Helper
  * Market Timings:
  * - NSE / BSE Equities & F&O: Monday to Friday, 09:15 to 15:30 IST (Pre-market 09:00 - 09:15 IST)
- * - MCX Commodities: Monday to Friday, 09:00 to 23:30 / 23:55 IST
+ * - MCX Commodities: Monday to Friday, 09:00 to 23:30 IST (Weekend-only holidays implemented)
  * - US Equities (NYSE / NASDAQ): Monday to Friday, 09:30 to 16:00 ET (Pre-market 04:00 - 09:30, After-hours 16:00 - 20:00 ET)
  * - Saturdays, Sundays, and Exchange Holidays: CLOSED
+ * - Note: Holiday tables cover years 2025–2026 only.
  */
 
 export interface MarketStatus {
@@ -18,7 +19,7 @@ export interface MarketStatus {
   tradingHours?: string;
 }
 
-// Indian Exchange Holidays keyed by year (NSE/BSE)
+// Indian Exchange Holidays keyed by year (NSE/BSE, covers 2025–2026)
 const NSE_HOLIDAYS: Record<number, Set<string>> = {
   2025: new Set([
     '2025-01-26', '2025-02-26', '2025-03-14', '2025-03-31', '2025-04-10',
@@ -46,7 +47,7 @@ const NSE_HOLIDAYS: Record<number, Set<string>> = {
   ]),
 };
 
-// US Stock Market Holidays (NYSE/NASDAQ)
+// US Stock Market Holidays (NYSE/NASDAQ, covers 2025–2026)
 const US_HOLIDAYS: Record<number, Set<string>> = {
   2025: new Set([
     '2025-01-01', // New Year's Day
@@ -74,14 +75,10 @@ const US_HOLIDAYS: Record<number, Set<string>> = {
   ]),
 };
 
-let cachedStatus: { time: number; dateKey: string; status: MarketStatus } | null = null;
-
 /**
  * Returns the current market status based on real Indian Standard Time (IST).
  */
 export function getIndianMarketStatus(date = new Date(), exchangeName = 'NSE/BSE'): MarketStatus {
-  const now = date.getTime();
-
   // Convert current time to IST string
   const istFormatter = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -104,13 +101,6 @@ export function getIndianMarketStatus(date = new Date(), exchangeName = 'NSE/BSE
   const minute = parseInt(getPart('minute'), 10);
 
   const dateStr = `${yearNum}-${month}-${day}`;
-
-  if (cachedStatus && cachedStatus.dateKey === dateStr && exchangeName === 'NSE/BSE') {
-    const elapsed = now - cachedStatus.time;
-    if (elapsed >= 0 && elapsed < 5000) {
-      return cachedStatus.status;
-    }
-  }
 
   const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST`;
 
@@ -189,9 +179,6 @@ export function getIndianMarketStatus(date = new Date(), exchangeName = 'NSE/BSE
     }
   }
 
-  if (exchangeName === 'NSE/BSE') {
-    cachedStatus = { time: now, dateKey: dateStr, status: resultStatus };
-  }
   return resultStatus;
 }
 

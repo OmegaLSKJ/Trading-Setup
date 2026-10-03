@@ -29,7 +29,7 @@ export class RequestQueue {
 
   public enqueue<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
     if (this.queue.length >= this.maxPendingQueue) {
-      return Promise.reject(new Error('Upstox request queue limit exceeded (too many pending requests).'));
+      return Promise.reject(new Error('Queue saturated: maximum pending request capacity exceeded.'));
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -83,7 +83,7 @@ export class RequestQueue {
     } catch (error: unknown) {
       const err = error as {
         status?: number;
-        retryAfter?: number;
+        retryAfter?: number | string;
         code?: string;
         message?: string;
         headers?: Headers | Record<string, string>;
@@ -99,10 +99,29 @@ export class RequestQueue {
         (err?.message && err.message.toLowerCase().includes('fetch failed'));
 
       if ((isRateLimit || isServerError || isNetworkException) && task.retries > 0) {
-        let retryAfterSec = err?.retryAfter;
+        let retryAfterSec: number | undefined;
+
+        if (typeof err?.retryAfter === 'number' && !isNaN(err.retryAfter) && err.retryAfter >= 0) {
+          retryAfterSec = err.retryAfter;
+        } else if (typeof err?.retryAfter === 'string') {
+          const trimmed = err.retryAfter.trim();
+          if (/^\d+$/.test(trimmed)) {
+            const parsed = parseInt(trimmed, 10);
+            if (!isNaN(parsed) && parsed >= 0) {
+              retryAfterSec = parsed;
+            }
+          } else {
+            // Try parsing as HTTP-date (RFC 7231 / RFC 9110)
+            const dateMs = Date.parse(trimmed);
+            if (!isNaN(dateMs)) {
+              const diffSec = Math.ceil((dateMs - Date.now()) / 1000);
+              retryAfterSec = Math.max(0, diffSec);
+            }
+          }
+        }
 
         // Parse Retry-After header if present
-        if (!retryAfterSec && err?.headers) {
+        if (retryAfterSec === undefined && err?.headers) {
           let rawHeaderVal: string | null | undefined;
           if (err.headers instanceof Headers) {
             rawHeaderVal = err.headers.get('retry-after');
@@ -135,7 +154,7 @@ export class RequestQueue {
         // Add randomized jitter (50ms - 250ms) to avoid thundering herd
         const jitter = Math.floor(Math.random() * 200) + 50;
         const delay =
-          (status === 429 || status === 503) && retryAfterSec !== undefined && retryAfterSec >= 0
+          retryAfterSec !== undefined && retryAfterSec >= 0
             ? retryAfterSec * 1000 + jitter
             : (isRateLimit ? 1500 * (4 - task.retries) : 800 * (4 - task.retries)) + jitter;
 
@@ -145,11 +164,15 @@ export class RequestQueue {
 
         await new Promise((r) => setTimeout(r, delay));
 
-        // Re-enqueue task
-        this.queue.unshift({
-          ...task,
-          retries: task.retries - 1,
-        });
+        // Re-enqueue task, checking maxPendingQueue limit
+        if (this.queue.length >= this.maxPendingQueue) {
+          task.reject(new Error('Queue saturated: retry could not re-enter full queue.'));
+        } else {
+          this.queue.unshift({
+            ...task,
+            retries: task.retries - 1,
+          });
+        }
       } else {
         task.reject(error);
       }

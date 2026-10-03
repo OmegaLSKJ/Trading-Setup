@@ -4,16 +4,24 @@ import { Candle, Timeframe, FailedRange } from './types';
 import {
   formatDateYYYYMMDD,
   calculateDateChunks,
-  dateStringToUtcSeconds,
+  getExchangeLocalDateBounds,
 } from './date-utils';
 
 export { formatDateYYYYMMDD, calculateDateChunks };
 
 const UPSTOX_BASE_URL = 'https://api.upstox.com/v3';
 
+/**
+ * Upstox Daily Response Convention (verified via live fixture tests/fixtures/upstox-daily-response.json):
+ * - Timestamps are ISO 8601 with Asia/Kolkata offset: e.g. "2026-03-31T00:00:00+05:30".
+ * - When converted to Unix UTC epoch seconds, IST midnight corresponds to 18:30 UTC of the prior calendar day.
+ * - Array order from Upstox API is descending chronologically; normalizeCandles sorts ascending.
+ * - Candle tuple format: [timestamp, open, high, low, close, volume, open_interest].
+ */
+
 // Server-side helper to get token
 export function getUpstoxToken(): string | undefined {
-  const token = process.env.UPSTOX_TOKEN;
+  const token = process.env.UPSTOX_TOKEN || process.env.UPSTOX_ANALYTICS_TOKEN;
   if (!token || token.trim() === '' || token.includes('YOUR_ANALYTICS_TOKEN') || token.includes('YOUR_UPSTOX_TOKEN_HERE')) {
     return undefined;
   }
@@ -52,7 +60,7 @@ export function mapTimeframeToUpstox(timeframe: Timeframe): { unit: string; inte
  * Raw Upstox candle tuple:
  * [timestamp (ISO string), open, high, low, close, volume, open_interest]
  */
-type UpstoxRawCandle = [string, number, number, number, number, number, number];
+export type UpstoxRawCandle = [string, number, number, number, number, number, number];
 
 interface UpstoxCandleResponse {
   status: string;
@@ -70,10 +78,10 @@ export interface CandleFetchResult {
 
 export class UpstoxApiError extends Error {
   status: number;
-  retryAfter?: number;
+  retryAfter?: number | string;
   code?: string;
 
-  constructor(message: string, status = 500, retryAfter?: number, code?: string) {
+  constructor(message: string, status = 500, retryAfter?: number | string, code?: string) {
     super(message);
     this.name = 'UpstoxApiError';
     this.status = status;
@@ -85,6 +93,7 @@ export class UpstoxApiError extends Error {
 /**
  * Normalizes and converts raw Upstox candles to dashboard format.
  * Preserves candle sorting, deduplication, and intraday precedence.
+ * Rejects null or non-finite OHLC values without converting them to zero.
  */
 export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
   if (!Array.isArray(rawCandles) || rawCandles.length === 0) {
@@ -99,6 +108,29 @@ export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
     const [isoTime, open, high, low, close, volume = 0, oi = 0] = item;
     if (!isoTime) continue;
 
+    if (
+      open === null || open === undefined ||
+      high === null || high === undefined ||
+      low === null || low === undefined ||
+      close === null || close === undefined
+    ) {
+      continue;
+    }
+
+    const o = Number(open);
+    const h = Number(high);
+    const l = Number(low);
+    const c = Number(close);
+
+    if (
+      !Number.isFinite(o) ||
+      !Number.isFinite(h) ||
+      !Number.isFinite(l) ||
+      !Number.isFinite(c)
+    ) {
+      continue;
+    }
+
     const parsedDate = new Date(isoTime);
     if (isNaN(parsedDate.getTime())) continue;
 
@@ -107,22 +139,15 @@ export function normalizeCandles(rawCandles: UpstoxRawCandle[]): Candle[] {
     const candle: Candle = {
       time: unixSeconds,
       timeString: isoTime,
-      open: Number(open),
-      high: Number(high),
-      low: Number(low),
-      close: Number(close),
-      volume: Number(volume) || 0,
-      openInterest: Number(oi) || 0,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      volume: Number.isFinite(Number(volume)) ? Number(volume) : 0,
+      openInterest: Number.isFinite(Number(oi)) ? Number(oi) : 0,
     };
 
-    if (
-      !isNaN(candle.open) &&
-      !isNaN(candle.high) &&
-      !isNaN(candle.low) &&
-      !isNaN(candle.close)
-    ) {
-      map.set(unixSeconds, candle);
-    }
+    map.set(unixSeconds, candle);
   }
 
   // Sort chronologically ascending
@@ -171,10 +196,13 @@ async function fetchHistoricalChunk(
         signal: timeoutController.signal,
       });
 
-      if (res.status === 429) {
-        const retryAfterHeader = res.headers.get('Retry-After');
-        const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
-        throw new UpstoxApiError('Upstox API rate limit reached', 429, retryAfter);
+      if (res.status === 429 || res.status === 503) {
+        const retryAfterHeader = res.headers.get('Retry-After') || undefined;
+        throw new UpstoxApiError(
+          res.status === 429 ? 'Upstox API rate limit reached' : 'Upstox service unavailable',
+          res.status,
+          retryAfterHeader
+        );
       }
 
       if (res.status === 401 || res.status === 403) {
@@ -197,7 +225,8 @@ async function fetchHistoricalChunk(
         } catch {
           // ignore parsing error
         }
-        throw new UpstoxApiError(errorMsg, res.status);
+        const retryAfterHeader = res.headers.get('Retry-After') || undefined;
+        throw new UpstoxApiError(errorMsg, res.status, retryAfterHeader);
       }
 
       const data: UpstoxCandleResponse = await res.json();
@@ -254,10 +283,13 @@ async function fetchIntraday(
         signal: timeoutController.signal,
       });
 
-      if (res.status === 429) {
-        const retryAfterHeader = res.headers.get('Retry-After');
-        const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 2;
-        throw new UpstoxApiError('Upstox API rate limit reached', 429, retryAfter);
+      if (res.status === 429 || res.status === 503) {
+        const retryAfterHeader = res.headers.get('Retry-After') || undefined;
+        throw new UpstoxApiError(
+          res.status === 429 ? 'Upstox API rate limit reached' : 'Upstox service unavailable',
+          res.status,
+          retryAfterHeader
+        );
       }
 
       if (res.status === 401 || res.status === 403) {
@@ -280,7 +312,8 @@ async function fetchIntraday(
         } catch {
           // ignore parse error
         }
-        throw new UpstoxApiError(errorMsg, res.status);
+        const retryAfterHeader = res.headers.get('Retry-After') || undefined;
+        throw new UpstoxApiError(errorMsg, res.status, retryAfterHeader);
       }
 
       const data: UpstoxCandleResponse = await res.json();
@@ -361,9 +394,13 @@ export async function fetchCandleRange(
     throw new UpstoxApiError(failedRanges[0].reason || 'All historical chunks failed', 502);
   }
 
-  // Check if today falls inside exchange-local requested range (Asia/Kolkata for Indian stocks)
-  const todayIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-  const isTodayInRange = todayIST >= fromDateStr && todayIST <= toDateStr;
+  // Determine exchange timezone from instrumentKey (US|... -> America/New_York, else Asia/Kolkata)
+  const isUS = instrumentKey.startsWith('US|') || instrumentKey.startsWith('NASDAQ:') || instrumentKey.startsWith('NYSE:');
+  const timeZone = isUS ? 'America/New_York' : 'Asia/Kolkata';
+
+  // Check if today falls inside exchange-local requested range
+  const todayExchange = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+  const isTodayInRange = todayExchange >= fromDateStr && todayExchange <= toDateStr;
 
   // Fetch intraday if requested and today is within range
   if (includeIntraday && isTodayInRange) {
@@ -377,14 +414,18 @@ export async function fetchCandleRange(
         throw err;
       }
       console.warn(`Intraday fetch failed for ${instrumentKey}:`, upstoxErr?.message);
+      failedRanges.push({
+        from: todayExchange,
+        to: todayExchange,
+        reason: upstoxErr?.message || 'Intraday fetch failed',
+      });
     }
   }
 
   const normalized = normalizeCandles(rawCandles);
 
-  // Filter merged candles strictly to bounds [fromSec, toSec + 86399]
-  const fromSec = dateStringToUtcSeconds(fromDateStr);
-  const toSecEnd = dateStringToUtcSeconds(toDateStr) + 86399;
+  // Filter merged candles strictly using exchange-local date bounds
+  const { fromSec, toSecEnd } = getExchangeLocalDateBounds(fromDateStr, toDateStr, timeZone);
   const filtered = normalized.filter((c) => c.time >= fromSec && c.time <= toSecEnd);
 
   return {
