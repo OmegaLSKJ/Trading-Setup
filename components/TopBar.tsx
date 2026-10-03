@@ -65,6 +65,11 @@ export const TopBar: React.FC = () => {
   const [isMarketMenuOpen, setIsMarketMenuOpen] = useState(false);
   const [currentDate, setCurrentDate] = useState(() => new Date());
 
+  const layoutMenuRef = useRef<HTMLDivElement>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
+  const timezoneMenuRef = useRef<HTMLDivElement>(null);
+  const marketMenuRef = useRef<HTMLDivElement>(null);
+
   const isCheckingHealthRef = useRef(false);
 
   const currentTimezoneOpt = getTimezoneOption(selectedTimezone || 'Asia/Kolkata');
@@ -77,16 +82,28 @@ export const TopBar: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Global click outside listener to close dropdowns smoothly
+  // Targeted click outside listener using refs
   useEffect(() => {
-    const handleClickOutside = () => {
-      setIsLayoutDropdownOpen(false);
-      setIsStatusPopoverOpen(false);
-      setIsTimezoneDropdownOpen(false);
-      setIsMarketMenuOpen(false);
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+
+      if (layoutMenuRef.current && !layoutMenuRef.current.contains(target)) {
+        setIsLayoutDropdownOpen(false);
+      }
+      if (statusMenuRef.current && !statusMenuRef.current.contains(target)) {
+        setIsStatusPopoverOpen(false);
+      }
+      if (timezoneMenuRef.current && !timezoneMenuRef.current.contains(target)) {
+        setIsTimezoneDropdownOpen(false);
+      }
+      if (marketMenuRef.current && !marketMenuRef.current.contains(target)) {
+        setIsMarketMenuOpen(false);
+      }
     };
-    window.addEventListener('click', handleClickOutside);
-    return () => window.removeEventListener('click', handleClickOutside);
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   // Poll health endpoint periodically with an in-flight guard
@@ -244,9 +261,14 @@ export const TopBar: React.FC = () => {
         </button>
 
         {/* Layout Mode Selector Dropdown */}
-        <div className="relative">
+        <div ref={layoutMenuRef} className="relative">
           <button
-            onClick={() => setIsLayoutDropdownOpen(!isLayoutDropdownOpen)}
+            onClick={() => {
+              setIsLayoutDropdownOpen((prev) => !prev);
+              setIsStatusPopoverOpen(false);
+              setIsTimezoneDropdownOpen(false);
+              setIsMarketMenuOpen(false);
+            }}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 hover:text-white transition-all cursor-pointer shadow-xs"
             title="Choose grid layout (Max 6 charts)"
           >
@@ -272,7 +294,10 @@ export const TopBar: React.FC = () => {
                   return (
                     <button
                       key={opt.mode}
-                      onClick={() => setLayoutMode(opt.mode)}
+                      onClick={() => {
+                        setLayoutMode(opt.mode);
+                        setIsLayoutDropdownOpen(false);
+                      }}
                       className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md transition-all cursor-pointer text-left ${
                         isSelected
                           ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-bold shadow-xs'
@@ -344,11 +369,10 @@ export const TopBar: React.FC = () => {
           const mcxStatus = getMCXMarketStatus(currentDate);
 
           return (
-            <div className="relative">
+            <div ref={marketMenuRef} className="relative">
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMarketMenuOpen(!isMarketMenuOpen);
+                onClick={() => {
+                  setIsMarketMenuOpen((prev) => !prev);
                   setIsTimezoneDropdownOpen(false);
                   setIsLayoutDropdownOpen(false);
                   setIsStatusPopoverOpen(false);
@@ -531,12 +555,13 @@ export const TopBar: React.FC = () => {
         })()}
 
         {/* Global Timezone Switcher */}
-        <div className="relative">
+        <div ref={timezoneMenuRef} className="relative">
           <button
             onClick={() => {
-              setIsTimezoneDropdownOpen(!isTimezoneDropdownOpen);
+              setIsTimezoneDropdownOpen((prev) => !prev);
               setIsLayoutDropdownOpen(false);
               setIsStatusPopoverOpen(false);
+              setIsMarketMenuOpen(false);
             }}
             className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
             title={`Chart Timezone: ${currentTimezoneOpt.label} (${currentTimezoneOpt.offset})`}
@@ -590,9 +615,14 @@ export const TopBar: React.FC = () => {
         </div>
 
         {/* Connection Status Badge */}
-        <div className="relative">
+        <div ref={statusMenuRef} className="relative">
           <button
-            onClick={() => setIsStatusPopoverOpen(!isStatusPopoverOpen)}
+            onClick={() => {
+              setIsStatusPopoverOpen((prev) => !prev);
+              setIsLayoutDropdownOpen(false);
+              setIsTimezoneDropdownOpen(false);
+              setIsMarketMenuOpen(false);
+            }}
             className={`flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-semibold tracking-wider transition-colors cursor-pointer ${
               connectionStatus === 'CONNECTED'
                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
