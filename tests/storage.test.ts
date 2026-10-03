@@ -71,4 +71,20 @@ describe('Multi-Chart Grid Selection & Capacity', () => {
       expect(useDashboardStore.getState().activeChartId).toBe(firstChart.id);
     }
   });
+
+  it('un-expands maximized charts when changing layout mode so grid renders', async () => {
+    const { useDashboardStore } = await import('../store/dashboard-store');
+    const store = useDashboardStore.getState();
+    const firstChart = store.charts[0];
+    if (firstChart) {
+      // Simulate maximizing a chart
+      store.setChartExpanded(firstChart.id, true);
+      expect(useDashboardStore.getState().charts.find((c) => c.id === firstChart.id)?.isExpanded).toBe(true);
+
+      // Switching layout mode should automatically un-expand the chart so the grid is displayed
+      store.setLayoutMode('2v');
+      expect(useDashboardStore.getState().layoutMode).toBe('2v');
+      expect(useDashboardStore.getState().charts.some((c) => c.isExpanded)).toBe(false);
+    }
+  });
 });

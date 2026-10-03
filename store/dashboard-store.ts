@@ -64,6 +64,22 @@ const DEFAULT_INSTRUMENTS: Instrument[] = [
     segment: 'NSE_EQ',
     instrument_type: 'EQ',
   },
+  {
+    instrument_key: 'NSE_EQ|INE009A01021',
+    trading_symbol: 'INFY',
+    name: 'INFOSYS LIMITED',
+    exchange: 'NSE',
+    segment: 'NSE_EQ',
+    instrument_type: 'EQ',
+  },
+  {
+    instrument_key: 'NSE_EQ|INE062A01020',
+    trading_symbol: 'SBIN',
+    name: 'STATE BANK OF INDIA',
+    exchange: 'NSE',
+    segment: 'NSE_EQ',
+    instrument_type: 'EQ',
+  },
 ];
 
 const INITIAL_CHARTS: ChartPanelState[] = DEFAULT_INSTRUMENTS.map((inst, idx) => ({
@@ -349,7 +365,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     if (!ALLOWED_LAYOUT_MODES.has(mode)) return;
     const { charts, watchlist } = get();
     const capacity = getLayoutCapacity(mode);
-    const nextCharts = [...charts];
+    // Un-expand all charts when switching layout so the selected grid is immediately visible
+    const nextCharts = charts.map((c) => ({ ...c, isExpanded: false }));
 
     // If switching to a grid mode with higher capacity than current charts,
     // auto-populate remaining slots with unopen instruments from watchlist or defaults
@@ -374,6 +391,19 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         nextCharts.push({
           id: `chart-${Date.now()}-${nextCharts.length + 1}`,
           instrument: inst,
+          timeframe: nextCharts[0]?.timeframe || '5m',
+          dateRangePreset: nextCharts[0]?.dateRangePreset || '5D',
+          indicators: { ...DEFAULT_INDICATORS },
+          isExpanded: false,
+        });
+      }
+
+      // If pool didn't have enough distinct instruments, fill with default templates
+      while (nextCharts.length < capacity && nextCharts.length < 6) {
+        const fallbackInst = DEFAULT_INSTRUMENTS[nextCharts.length % DEFAULT_INSTRUMENTS.length];
+        nextCharts.push({
+          id: `chart-${Date.now()}-${nextCharts.length + 1}`,
+          instrument: { ...fallbackInst },
           timeframe: nextCharts[0]?.timeframe || '5m',
           dateRangePreset: nextCharts[0]?.dateRangePreset || '5D',
           indicators: { ...DEFAULT_INDICATORS },
@@ -523,11 +553,15 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   setChartExpanded: (chartId, isExpanded) => {
-    set((state) => ({
-      charts: state.charts.map((c) =>
-        c.id === chartId ? { ...c, isExpanded } : { ...c, isExpanded: false }
-      ),
-    }));
+    const { layoutMode } = get();
+    const updatedCharts = get().charts.map((c) =>
+      c.id === chartId ? { ...c, isExpanded } : { ...c, isExpanded: false }
+    );
+    set({ charts: updatedCharts });
+    safeLocalStorageSet(
+      'upstox_active_dashboard',
+      JSON.stringify({ charts: updatedCharts, layoutMode })
+    );
   },
 
   removeChart: (chartId) => {

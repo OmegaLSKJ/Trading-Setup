@@ -97,7 +97,7 @@ const EmptySlotCard: React.FC<EmptySlotCardProps> = ({
 };
 
 export const ChartGrid: React.FC = () => {
-  const { charts, layoutMode, activeChartId, watchlist, addChart, openSymbolSearch } =
+  const { charts, layoutMode, activeChartId, watchlist, addChart, openSymbolSearch, setChartExpanded } =
     useDashboardStore();
 
   // Maximum chart allowance capped strictly at 6
@@ -127,11 +127,21 @@ export const ChartGrid: React.FC = () => {
 
   const emptySlotsCount = Math.max(0, maxDisplayCount - visibleCharts.length);
 
-  // If any chart is maximized/expanded, display only that chart full-screen
+  // If any chart is maximized/expanded, display only that chart full-screen with quick restore bar
   const expandedChart = useMemo(() => charts.find((c) => c.isExpanded), [charts]);
   if (expandedChart) {
     return (
-      <main className="flex-1 w-full h-full bg-[#090d16] p-1 overflow-hidden">
+      <main className="flex-1 w-full h-full bg-[#090d16] p-1 overflow-hidden relative">
+        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-amber-500/50 text-amber-300 text-xs px-3.5 py-1.5 rounded-full shadow-2xl flex items-center gap-2.5 backdrop-blur-md">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <span className="font-semibold text-white">Chart Maximized: {expandedChart.instrument.trading_symbol}</span>
+          <button
+            onClick={() => setChartExpanded(expandedChart.id, false)}
+            className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-[11px] cursor-pointer transition-colors"
+          >
+            Restore {layoutMode.toUpperCase()} Grid (Esc)
+          </button>
+        </div>
         <ChartPanel panel={expandedChart} />
       </main>
     );

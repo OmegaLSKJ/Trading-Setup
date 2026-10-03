@@ -22,6 +22,7 @@ import {
   Target,
   Globe,
   Check,
+  Minimize2,
 } from 'lucide-react';
 import { TIMEZONE_OPTIONS, getTimezoneOption } from '@/lib/timezones';
 
@@ -53,11 +54,13 @@ export const TopBar: React.FC = () => {
   const setConnectionStatus = useDashboardStore((s) => s.setConnectionStatus);
   const selectedTimezone = useDashboardStore((s) => s.selectedTimezone);
   const setTimezone = useDashboardStore((s) => s.setTimezone);
+  const setChartExpanded = useDashboardStore((s) => s.setChartExpanded);
 
   const activeChart = charts.find((c) => c.id === activeChartId) || charts[0];
   const activeInstrument = activeChart?.instrument;
 
   const isStrategyActive = charts.some((c) => c.indicators.strategy);
+  const isAnyChartExpanded = charts.some((c) => c.isExpanded);
 
   const [isLayoutDropdownOpen, setIsLayoutDropdownOpen] = useState(false);
   const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
@@ -330,6 +333,18 @@ export const TopBar: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Restore Grid Button (only visible when a chart is maximized) */}
+        {isAnyChartExpanded && (
+          <button
+            onClick={() => setChartExpanded('', false)}
+            className="flex items-center gap-1 px-2 py-1.5 rounded bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 text-xs font-semibold transition-colors cursor-pointer animate-pulse shadow-sm"
+            title="A chart is currently maximized. Click to restore grid view."
+          >
+            <Minimize2 className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Restore Grid</span>
+          </button>
+        )}
 
         {/* Add Chart Button (capped at 6) */}
         <button

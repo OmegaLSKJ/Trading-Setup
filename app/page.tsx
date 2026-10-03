@@ -45,6 +45,11 @@ export default function Home() {
           e.preventDefault();
           openSymbolSearch();
         }
+      } else if (e.key === 'Escape' && !isAnyModalOpen) {
+        const hasExpanded = state.charts.some((c) => c.isExpanded);
+        if (hasExpanded) {
+          state.setChartExpanded('', false);
+        }
       }
     };
 
