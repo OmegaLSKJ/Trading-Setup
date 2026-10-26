@@ -38,4 +38,9 @@ describe('ARTHA news mapping', () => {
     expect(items[0]).toMatchObject({ title: 'Nifty gains & banks lead', source: 'Example Markets' });
     expect(items[0].published).toContain('2026-10-27');
   });
+
+  it('removes encoded CDATA terminators left by a publisher feed', () => {
+    const items = parseArthaRss('<rss><channel><item><title>Market update]]&gt;</title><link>https://example.com/update</link></item></channel></rss>', 'Example');
+    expect(items[0].title).toBe('Market update');
+  });
 });

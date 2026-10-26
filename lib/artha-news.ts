@@ -60,7 +60,7 @@ function decodeEntities(value: string): string {
 }
 
 function cleanRssText(value: string): string {
-  return decodeEntities(value.replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' '))
+  return decodeEntities(value.replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' ')).replace(/\]\]>$/g, '')
     .replace(/\s+/g, ' ').trim();
 }
 
