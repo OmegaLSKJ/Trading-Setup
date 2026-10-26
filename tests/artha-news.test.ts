@@ -40,7 +40,7 @@ describe('ARTHA news mapping', () => {
   });
 
   it('removes encoded CDATA terminators left by a publisher feed', () => {
-    const items = parseArthaRss('<rss><channel><item><title>Market update]]&gt;</title><link>https://example.com/update</link></item></channel></rss>', 'Example');
+    const items = parseArthaRss('<rss><channel><item><title>Market update]]&gt; </title><link>https://example.com/update</link></item></channel></rss>', 'Example');
     expect(items[0].title).toBe('Market update');
   });
 });

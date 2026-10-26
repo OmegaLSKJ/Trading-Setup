@@ -60,8 +60,9 @@ function decodeEntities(value: string): string {
 }
 
 function cleanRssText(value: string): string {
-  return decodeEntities(value.replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' ')).replace(/\]\]>$/g, '')
+  const cleaned = decodeEntities(value.replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' '))
     .replace(/\s+/g, ' ').trim();
+  return cleaned.replace(/\]\]>$/g, '').trim();
 }
 
 function tag(item: string, name: string): string {
