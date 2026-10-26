@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { allowApiRequest } from '@/lib/api-rate-limit';
-import { normalizeArthaNews } from '@/lib/artha-news';
+import { fetchArthaRssNews, normalizeArthaNews } from '@/lib/artha-news';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +16,16 @@ export async function GET(request: NextRequest) {
       cache: 'no-store',
       signal: AbortSignal.timeout(12_000),
     });
-    if (!response.ok) {
-      return NextResponse.json({ success: false, error: 'ARTHA news is unavailable.', items: [] }, { status: 502 });
+    if (response.ok) {
+      const items = normalizeArthaNews(await response.json());
+      if (items.length) return NextResponse.json({ success: true, items, source: 'artha-api' });
     }
-
-    return NextResponse.json({ success: true, items: normalizeArthaNews(await response.json()) });
   } catch {
-    return NextResponse.json({ success: false, error: 'ARTHA news is unavailable.', items: [] }, { status: 503 });
+    // The hosted app normally cannot reach a local ARTHA process. Fall through
+    // to ARTHA's public RSS sources below so the news panel stays online.
   }
+
+  const items = await fetchArthaRssNews();
+  if (items.length) return NextResponse.json({ success: true, items, source: 'artha-rss' });
+  return NextResponse.json({ success: false, error: 'ARTHA news is temporarily unavailable.', items: [] }, { status: 503 });
 }

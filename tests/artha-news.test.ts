@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeArthaNews } from '../lib/artha-news';
+import { normalizeArthaNews, parseArthaRss } from '../lib/artha-news';
 
 describe('ARTHA news mapping', () => {
   it('keeps only safe, displayable fields from ARTHA news', () => {
@@ -24,5 +24,18 @@ describe('ARTHA news mapping', () => {
 
   it('drops malformed items without a headline', () => {
     expect(normalizeArthaNews({ items: [{ link: 'https://example.com' }, null] })).toEqual([]);
+  });
+
+  it('maps ARTHA RSS articles into the same display contract', () => {
+    const items = parseArthaRss(`<?xml version="1.0"?><rss><channel><item>
+      <title><![CDATA[Nifty gains &amp; banks lead]]></title>
+      <link>https://example.com/markets/nifty-gains</link>
+      <description><![CDATA[<p>RBI news moved the market.</p>]]></description>
+      <pubDate>Mon, 27 Oct 2026 10:30:00 +0530</pubDate>
+    </item></channel></rss>`, 'Example Markets');
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: 'Nifty gains & banks lead', source: 'Example Markets' });
+    expect(items[0].published).toContain('2026-10-27');
   });
 });
