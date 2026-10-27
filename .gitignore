@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# Resumable local candle cache and generated backtest ledgers
+/outputs/
+
 # production
 /build
 

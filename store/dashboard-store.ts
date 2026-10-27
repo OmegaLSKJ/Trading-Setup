@@ -29,6 +29,7 @@ export const DEFAULT_INDICATORS: IndicatorConfig = {
   vwap: true,
   volume: true,
   strategy: true,
+  aiForecast: false,
 };
 
 const DEFAULT_INSTRUMENTS: Instrument[] = [

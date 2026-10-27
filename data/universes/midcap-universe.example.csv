@@ -1,0 +1,8 @@
+# Copy this file to data/universes/midcap-universe.csv and replace examples with the
+# official constituent data used for the run. instrument_key must be the current
+# Upstox key (for example NSE_EQ|INE... or BSE_EQ|INE...).
+# active_from and active_to are optional inclusive YYYY-MM-DD dates. Populate them
+# from historical constituent files to avoid survivorship bias.
+exchange,instrument_key,symbol,name,active_from,active_to,source
+NSE,NSE_EQ|INE000000000,EXAMPLE_NSE,Example NSE Midcap,2022-01-01,,NSE Midcap constituent file
+BSE,BSE_EQ|INE000000000,EXAMPLE_BSE,Example BSE Midcap,2022-01-01,,BSE Midcap constituent file

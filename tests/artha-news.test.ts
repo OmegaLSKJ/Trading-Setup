@@ -36,6 +36,7 @@ describe('ARTHA news mapping', () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ title: 'Nifty gains & banks lead', source: 'Example Markets' });
+    expect(items[0]).toMatchObject({ category: 'markets', impact: 'high' });
     expect(items[0].published).toContain('2026-10-27');
   });
 

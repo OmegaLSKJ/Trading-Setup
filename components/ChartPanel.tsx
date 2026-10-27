@@ -7,7 +7,9 @@ import {
   Timeframe,
   DateRangePreset,
   IndicatorConfig,
+  AiForecast,
 } from '@/lib/types';
+import { forecastContextDays, supportsAiForecast } from '@/lib/ai-forecast';
 import { CandlestickChart, CandlestickChartHandle } from './CandlestickChart';
 import { getDateRangeForPreset } from '@/lib/date-presets';
 import { useDashboardStore } from '@/store/dashboard-store';
@@ -61,6 +63,8 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const [liveChangePercent, setLiveChangePercent] = useState<number>(0);
   const [tickFlash, setTickFlash] = useState<'UP' | 'DOWN' | null>(null);
   const [strategySummary, setStrategySummary] = useState<StrategySummary | null>(null);
+  const [forecast, setForecast] = useState<AiForecast | null>(null);
+  const [forecastError, setForecastError] = useState<string | null>(null);
 
   const isHydrated = useDashboardStore((s) => s.isHydrated);
   const activeChartId = useDashboardStore((s) => s.activeChartId);
@@ -86,6 +90,8 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
   const navigationTimersRef = useRef<NodeJS.Timeout[]>([]);
   const navToastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const navHideTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const forecastedCandleRef = useRef<string>('');
+  const feedbackRecordedRef = useRef<Set<string>>(new Set());
 
   const latestContextRef = useRef({
     instrumentKey: panel.instrument.instrument_key,
@@ -115,6 +121,9 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
       setLivePrice(null);
       setErrorMessage(null);
       setPartialNotice(null);
+      setForecast(null);
+      setForecastError(null);
+      forecastedCandleRef.current = '';
     }
   }, [currentContextKey]);
 
@@ -309,6 +318,70 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
 
     return () => clearInterval(intervalId);
   }, [autoRefreshInterval, loadCandles]);
+
+  // The forecast is optional and runs only after real provider candles have loaded.
+  // It is deliberately decoupled from candle retrieval so a local ML outage cannot block charting.
+  useEffect(() => {
+    if (!panel.indicators.aiForecast || !supportsAiForecast(panel.timeframe)) {
+      forecastedCandleRef.current = '';
+      return;
+    }
+    const lastTime = candles[candles.length - 1]?.time;
+    const requestKey = `${panel.instrument.instrument_key}:${panel.timeframe}:${lastTime}`;
+    if (forecastedCandleRef.current === requestKey) return;
+    const controller = new AbortController();
+    const loadForecast = async () => {
+      setForecastError(null);
+      try {
+        // A chart's selected range can be shorter than Kronos's minimum context (notably
+        // hourly/daily default views). Fetch provider history solely for inference; the
+        // chart retains the user's selected range.
+        let forecastCandles = candles;
+        if (forecastCandles.length < 40) {
+          const to = new Date().toISOString().slice(0, 10);
+          const fromDate = new Date();
+          fromDate.setUTCDate(fromDate.getUTCDate() - forecastContextDays(panel.timeframe));
+          const from = fromDate.toISOString().slice(0, 10);
+          const contextResponse = await fetch(
+            `/api/candles?instrumentKey=${encodeURIComponent(panel.instrument.instrument_key)}&timeframe=${panel.timeframe}&from=${from}&to=${to}&includeIntraday=false`,
+            { signal: controller.signal }
+          );
+          const contextData = await contextResponse.json();
+          if (!contextResponse.ok || !contextData.success) throw new Error(contextData.error || 'Unable to load enough candle history for AI Forecast.');
+          forecastCandles = contextData.candles || [];
+        }
+        if (forecastCandles.length < 40) throw new Error('This instrument has fewer than 40 valid candles at the selected timeframe.');
+        const response = await fetch('/api/ai-forecast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instrumentKey: panel.instrument.instrument_key, timeframe: panel.timeframe, candles: forecastCandles }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'AI Forecast is unavailable.');
+        forecastedCandleRef.current = requestKey;
+        setForecast(data.forecast as AiForecast);
+      } catch (error: unknown) {
+        if ((error as { name?: string }).name !== 'AbortError') setForecastError(error instanceof Error ? error.message : 'AI Forecast is unavailable.');
+      }
+    };
+    void loadForecast();
+    return () => controller.abort();
+  }, [candles, panel.indicators.aiForecast, panel.instrument.instrument_key, panel.timeframe]);
+
+  // Capture only completed, observed forecast points. This powers retrieval calibration;
+  // it never retrains Kronos or changes trading behavior.
+  useEffect(() => {
+    if (!forecast || candles.length === 0) return;
+    const latest = candles[candles.length - 1];
+    const observed = [...forecast.points].reverse().find((point) => point.time <= latest.time);
+    if (!observed || feedbackRecordedRef.current.has(`${forecast.id}:${observed.time}`)) return;
+    feedbackRecordedRef.current.add(`${forecast.id}:${observed.time}`);
+    void fetch('/api/ai-forecast/feedback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instrumentKey: forecast.instrumentKey, timeframe: forecast.timeframe, predictedClose: observed.close, actualClose: latest.close }),
+    });
+  }, [forecast, candles]);
 
   // Callback when a real-time micro-tick arrives from the live stream
   const handleLivePriceUpdate = useCallback((
@@ -671,6 +744,16 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
                     className="rounded accent-emerald-500 cursor-pointer"
                   />
                 </label>
+                <label className={`flex items-center justify-between px-3 py-1 hover:bg-slate-700/60 ${supportsAiForecast(panel.timeframe) ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+                  <span className="text-violet-300" title="Kronos forecast overlay; research only">AI Forecast</span>
+                  <input
+                    type="checkbox"
+                    checked={panel.indicators.aiForecast}
+                    disabled={!supportsAiForecast(panel.timeframe)}
+                    onChange={() => toggleChartIndicator(panel.id, 'aiForecast')}
+                    className="rounded accent-violet-500 cursor-pointer"
+                  />
+                </label>
               </div>
             )}
           </div>
@@ -780,6 +863,11 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           </button>
         </div>
       )}
+      {forecastError && panel.indicators.aiForecast && (
+        <div className="bg-violet-950/70 border-b border-violet-800/60 px-3 py-1 text-xs text-violet-200 z-10 shrink-0">
+          AI Forecast: {forecastError}
+        </div>
+      )}
 
       {/* Main Candlestick Chart Canvas */}
       <div className="flex-1 w-full relative min-h-0">
@@ -797,6 +885,7 @@ export const ChartPanel: React.FC<Props> = ({ panel }) => {
           tradingSymbol={panel.instrument.trading_symbol}
           timeframe={panel.timeframe}
           candles={candles}
+          forecast={forecast}
           indicators={panel.indicators}
           isLoading={isLoading}
           isLiveDisabled={isHistoricalOnly}

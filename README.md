@@ -137,3 +137,48 @@ npm run build
 | `↑` / `↓` | Navigate Search Results |
 | `Enter` / `Space` | Select Instrument / Navigate to Trade |
 | `Esc` | Close Active Modal Dialog |
+
+---
+
+## Optional AI Forecast Overlay (Kronos)
+
+The per-chart **AI Forecast** indicator renders an optional dashed Kronos forecast path for
+every instrument the dashboard can retrieve valid candles for (NSE, US equities, indices, and
+ETFs) on `5m`, `15m`, `30m`, `1h`, and `1D` charts. It is a research aid only: it neither
+places orders nor changes the existing strategy. When a selected range is too short for Kronos,
+the app privately fetches additional history for inference while leaving the visible chart range
+unchanged.
+
+Start the local inference service described in
+[`services/kronos/README.md`](services/kronos/README.md), then enable **AI Forecast** in a
+chart's indicators menu. The app retains completed prediction-versus-observed outcomes in its
+local Next.js cache and retrieves same-symbol/timeframe outcomes to apply a small calibration
+bias after five samples. This is auditable retrieval-based learning, not automatic model
+fine-tuning; Kronos weights never change unless you explicitly run its separate training flow.
+
+---
+
+## Historical NSE/BSE Midcap Strategy Ledger
+
+The exact TypeScript strategy can be replayed over a supplied NSE/BSE midcap universe at the
+calibrated `5m` interval. Copy
+[`data/universes/midcap-universe.example.csv`](data/universes/midcap-universe.example.csv) to
+`data/universes/midcap-universe.csv`, populate it from the constituent lists you are licensed to
+use, and run:
+
+```bash
+npm run backtest:midcap -- --universe data/universes/midcap-universe.csv --from 2022-01-01 --to 2026-10-26
+```
+
+The runner loads the server-only Upstox token from `.env.local`, caches only complete candle
+responses, and writes local generated results to `outputs/midcap-backtests/`:
+
+- `trades.csv` — every historical entry and available exit, including exact exit reason and P&L.
+- `symbols.csv` — per-symbol coverage and errors.
+- `manifest.json` — run metadata and a complete data-quality audit trail.
+
+It never invents exits: a final unclosed position remains `OPEN`. Current constituent lists alone
+create survivorship bias; set `active_from` and `active_to` from historical membership files for
+a date-aware result. The default start is `2022-01-01`, matching the provider's intraday-history
+availability. Use `--dry-run` to validate a universe without fetching candles and `--refresh` to
+replace a cached complete range.

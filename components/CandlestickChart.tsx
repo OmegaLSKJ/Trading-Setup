@@ -17,7 +17,7 @@ import {
   IPriceLine,
 } from 'lightweight-charts';
 
-import { Candle, IndicatorConfig, Timeframe, LiveTick } from '@/lib/types';
+import { AiForecast, Candle, IndicatorConfig, Timeframe, LiveTick } from '@/lib/types';
 import {
   calculateEMA,
   calculateVWAP,
@@ -47,6 +47,7 @@ interface Props {
   tradingSymbol: string;
   timeframe: Timeframe;
   candles: Candle[];
+  forecast?: AiForecast | null;
   indicators: IndicatorConfig;
   isLoading?: boolean;
   isLiveDisabled?: boolean;
@@ -116,6 +117,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
       tradingSymbol,
       timeframe,
       candles,
+      forecast,
       indicators,
       isLoading,
       isLiveDisabled,
@@ -129,6 +131,7 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
     const chartApiRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+    const forecastSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const emaSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
     const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
@@ -451,6 +454,15 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         visible: false,
       });
       volumeSeriesRef.current = volumeSeries;
+
+      forecastSeriesRef.current = chart.addSeries(LineSeries, {
+        color: '#a78bfa',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        title: 'AI Forecast',
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
 
       // Crosshair move handler
       chart.subscribeCrosshairMove((param) => {
@@ -866,6 +878,19 @@ export const CandlestickChart = forwardRef<CandlestickChartHandle, Props>(
         volumeSeriesRef.current.setData([]);
       }
     }, [indicators.volume]);
+
+    // Forecasts are rendered as an optional dashed close-price path, never as synthetic candles.
+    useEffect(() => {
+      if (!forecastSeriesRef.current) return;
+      if (!indicators.aiForecast || !forecast?.points?.length) {
+        forecastSeriesRef.current.setData([]);
+        return;
+      }
+      forecastSeriesRef.current.setData(forecast.points.map((point) => ({
+        time: point.time as unknown as Time,
+        value: point.close,
+      })));
+    }, [forecast, indicators.aiForecast]);
 
     // Real-Time Live Market Data Stream Subscription
     useEffect(() => {

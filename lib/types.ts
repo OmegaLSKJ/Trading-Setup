@@ -75,6 +75,27 @@ export interface IndicatorConfig {
   vwap: boolean;
   volume: boolean;
   strategy: boolean;
+  aiForecast: boolean;
+}
+
+export interface AiForecastPoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export interface AiForecast {
+  id: string;
+  instrumentKey: string;
+  timeframe: Timeframe;
+  generatedAt: number;
+  points: AiForecastPoint[];
+  calibrationSampleCount: number;
+  calibrationMeanError: number;
+  source: 'kronos';
 }
 
 export interface ChartPanelState {
