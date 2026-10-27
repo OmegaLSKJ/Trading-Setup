@@ -32,7 +32,8 @@ describe('ARTHA news route', () => {
       success: true, source: 'artha-api',
       items: [{
         title: 'Sensex rises', summary: 'Banks led the market.', source: 'Example',
-        url: 'https://example.com/market', published: '', impact: 'medium', category: 'markets', tickers: [],
+        url: 'https://example.com/market', published: '', impact: 'medium', category: 'markets',
+        geography: { label: 'India', x: 69, y: 61 }, tickers: [],
       }],
     });
   });

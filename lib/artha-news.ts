@@ -8,8 +8,16 @@ export type ArthaNewsItem = {
   published: string;
   impact: 'high' | 'medium' | 'low';
   category: 'markets' | 'macro' | 'world' | 'india';
+  geography: NewsGeography;
   tickers: string[];
 };
+
+export interface NewsGeography {
+  /** Approximate headline geography, not a publisher or reader location. */
+  label: string;
+  x: number;
+  y: number;
+}
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -31,6 +39,33 @@ const ARTHA_RSS_FEEDS: Feed[] = [
 
 const HIGH_IMPACT_TERMS = /\b(central bank|federal reserve|\bfed\b|\brbi\b|interest rate|rate decision|inflation|\bcpi\b|tariff|sanction|ceasefire|war|invasion|crude|oil price|opec|currency crisis|default)\b/i;
 const MEDIUM_IMPACT_TERMS = /\b(earnings|gdp|jobs report|unemployment|trade|merger|acquisition|guidance|bond yield|rupee|dollar|gold|commodity)\b/i;
+
+const NEWS_REGIONS: Array<NewsGeography & { terms: RegExp }> = [
+  { label: 'India', x: 69, y: 61, terms: /\b(india|indian|\brbi\b|rupee|nifty|sensex|mumbai|delhi)\b/i },
+  { label: 'North America', x: 23, y: 34, terms: /\b(united states|\bu\.?s\.?\b|america|trump|washington|wall street|new york|federal reserve|\bfed\b|canada|mexico)\b/i },
+  { label: 'Europe', x: 49, y: 31, terms: /\b(europe|european|\becb\b|ukraine|russia|russian|germany|france|britain|\buk\b|london|brussels)\b/i },
+  { label: 'Middle East', x: 59, y: 47, terms: /\b(middle east|israel|gaza|iran|iraq|saudi|yemen|qatar|uae|gulf)\b/i },
+  { label: 'Africa', x: 51, y: 64, terms: /\b(africa|nigeria|egypt|south africa|kenya|ethiopia|sudan)\b/i },
+  { label: 'East Asia', x: 77, y: 42, terms: /\b(china|chinese|beijing|taiwan|japan|tokyo|korea|seoul|hong kong)\b/i },
+  { label: 'Southeast Asia', x: 76, y: 60, terms: /\b(singapore|indonesia|malaysia|thailand|vietnam|philippines)\b/i },
+  { label: 'Latin America', x: 31, y: 66, terms: /\b(brazil|argentina|chile|colombia|peru|latin america)\b/i },
+  { label: 'Oceania', x: 86, y: 72, terms: /\b(australia|new zealand|sydney|melbourne)\b/i },
+];
+
+const CATEGORY_FALLBACK_GEO: Record<ArthaNewsItem['category'], NewsGeography> = {
+  india: { label: 'India', x: 69, y: 61 },
+  markets: { label: 'North America', x: 23, y: 34 },
+  macro: { label: 'Global', x: 52, y: 25 },
+  world: { label: 'Global', x: 52, y: 25 },
+};
+
+export function inferNewsGeography(title: string, summary: string, category: ArthaNewsItem['category']): NewsGeography {
+  const signal = `${title} ${summary}`;
+  const match = NEWS_REGIONS.find((region) => region.terms.test(signal));
+  return match
+    ? { label: match.label, x: match.x, y: match.y }
+    : CATEGORY_FALLBACK_GEO[category];
+}
 
 function record(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : null;
@@ -90,6 +125,7 @@ export function parseArthaRss(xml: string, source: string): ArthaNewsItem[] {
     if (!title || !url) return [];
     const summary = tag(raw, 'description').slice(0, 500);
     const signal = `${title} ${summary}`;
+    const category: ArthaNewsItem['category'] = 'markets';
     return [{
       title,
       summary,
@@ -97,7 +133,8 @@ export function parseArthaRss(xml: string, source: string): ArthaNewsItem[] {
       url,
       published: rssPublished(tag(raw, 'pubDate') || tag(raw, 'dc:date')),
       impact: HIGH_IMPACT_TERMS.test(signal) ? 'high' : MEDIUM_IMPACT_TERMS.test(signal) ? 'medium' : 'low',
-      category: 'markets',
+      category,
+      geography: inferNewsGeography(title, summary, category),
       tickers: [],
     }];
   }).slice(0, 8);
@@ -113,7 +150,11 @@ export async function fetchArthaRssNews(fetcher: typeof fetch = fetch): Promise<
         signal: AbortSignal.timeout(10_000),
       });
       return response.ok
-        ? parseArthaRss(await response.text(), feed.name).map((item) => ({ ...item, category: feed.category }))
+        ? parseArthaRss(await response.text(), feed.name).map((item) => ({
+          ...item,
+          category: feed.category,
+          geography: inferNewsGeography(item.title, item.summary, feed.category),
+        }))
         : [];
     } catch {
       return [];
@@ -157,6 +198,7 @@ export function normalizeArthaNews(payload: unknown): ArthaNewsItem[] {
           .filter(Boolean).slice(0, 4)
       : [];
 
+    const category: ArthaNewsItem['category'] = rawCategory === 'world' || rawCategory === 'macro' || rawCategory === 'india' ? rawCategory : 'markets';
     return [{
       title,
       summary,
@@ -166,7 +208,8 @@ export function normalizeArthaNews(payload: unknown): ArthaNewsItem[] {
       impact: rawImpact === 'high' || rawImpact === 'medium'
         ? rawImpact
         : HIGH_IMPACT_TERMS.test(signal) ? 'high' : MEDIUM_IMPACT_TERMS.test(signal) ? 'medium' : 'low',
-      category: rawCategory === 'world' || rawCategory === 'macro' || rawCategory === 'india' ? rawCategory : 'markets',
+      category,
+      geography: inferNewsGeography(title, summary, category),
       tickers,
     }];
   }).slice(0, 10);

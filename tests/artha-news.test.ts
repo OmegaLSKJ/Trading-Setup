@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeArthaNews, parseArthaRss } from '../lib/artha-news';
+import { inferNewsGeography, normalizeArthaNews, parseArthaRss } from '../lib/artha-news';
 
 describe('ARTHA news mapping', () => {
   it('keeps only safe, displayable fields from ARTHA news', () => {
@@ -43,5 +43,10 @@ describe('ARTHA news mapping', () => {
   it('removes encoded CDATA terminators left by a publisher feed', () => {
     const items = parseArthaRss('<rss><channel><item><title>Market update]]&gt; </title><link>https://example.com/update</link></item></channel></rss>', 'Example');
     expect(items[0].title).toBe('Market update');
+  });
+
+  it('uses headline geography for map dots and has a category fallback', () => {
+    expect(inferNewsGeography('RBI rate decision', '', 'india')).toMatchObject({ label: 'India', x: 69, y: 61 });
+    expect(inferNewsGeography('Global growth slows', '', 'macro')).toMatchObject({ label: 'Global', x: 52, y: 25 });
   });
 });

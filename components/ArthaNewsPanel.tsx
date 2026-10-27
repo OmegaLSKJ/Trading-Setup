@@ -11,6 +11,7 @@ type NewsItem = {
   published: string;
   impact: 'high' | 'medium' | 'low';
   category: 'markets' | 'macro' | 'world' | 'india';
+  geography: { label: string; x: number; y: number };
   tickers: string[];
 };
 
@@ -29,6 +30,64 @@ function timeAgo(value: string): string {
   if (minutes < 60) return `${minutes}m`;
   if (minutes < 1_440) return `${Math.floor(minutes / 60)}h`;
   return `${Math.floor(minutes / 1_440)}d`;
+}
+
+const IMPACT_COLOR: Record<NewsItem['impact'], string> = {
+  high: '#fb7185',
+  medium: '#f59e0b',
+  low: '#94a3b8',
+};
+
+function GlobalNewsMap({ items, loading }: { items: NewsItem[]; loading: boolean }) {
+  const seenLocations = new Map<string, number>();
+  const markers = items.slice(0, 30).map((item) => {
+    const key = `${item.geography.x}:${item.geography.y}`;
+    const duplicate = seenLocations.get(key) ?? 0;
+    seenLocations.set(key, duplicate + 1);
+    const offsetX = ((duplicate % 3) - 1) * 1.15;
+    const offsetY = (Math.floor(duplicate / 3) % 2) * 1.35;
+    return { item, x: item.geography.x + offsetX, y: item.geography.y + offsetY };
+  });
+
+  return (
+    <section className="border-b border-slate-800 bg-[#080d17] px-2.5 py-2" aria-label="Global news map">
+      <div className="mb-1.5 flex items-center justify-between text-[9px] font-mono uppercase tracking-wider">
+        <span className="text-slate-400">World news map</span>
+        <span className="text-slate-600">{loading ? 'SYNCING' : `${markers.length} STORIES`}</span>
+      </div>
+      <div className="relative overflow-hidden rounded border border-slate-800 bg-[#0a1220]">
+        <svg viewBox="0 0 100 50" className="block w-full" role="img" aria-label="Flat world map with news severity dots">
+          <rect width="100" height="50" fill="#0a1220" />
+          <g fill="#141f31" stroke="#26354b" strokeWidth="0.35">
+            <path d="M5 12 L12 7 L21 8 L27 13 L25 18 L20 19 L18 24 L13 25 L9 20 L4 19 Z" />
+            <path d="M22 26 L28 28 L31 35 L29 44 L25 47 L23 39 L20 34 Z" />
+            <path d="M40 12 L49 8 L59 10 L64 15 L69 16 L75 14 L86 18 L91 24 L84 28 L76 27 L71 31 L65 28 L59 31 L54 27 L48 25 L43 20 Z" />
+            <path d="M48 27 L55 29 L58 35 L55 45 L50 47 L46 39 L44 32 Z" />
+            <path d="M78 35 L86 34 L92 39 L89 45 L81 44 L76 40 Z" />
+            <path d="M34 8 L38 7 L39 10 L35 11 Z" />
+          </g>
+          <g fill="none" stroke="#1d2b3e" strokeWidth="0.2" strokeDasharray="1.2 1.4">
+            <path d="M0 16.5 H100 M0 25 H100 M0 33.5 H100" />
+            <path d="M25 0 V50 M50 0 V50 M75 0 V50" />
+          </g>
+          {markers.map(({ item, x, y }, index) => (
+            <a key={`${item.url || item.title}-${index}`} href={item.url || undefined} target={item.url ? '_blank' : undefined} rel={item.url ? 'noreferrer' : undefined}>
+              <title>{`${item.geography.label} · ${item.impact.toUpperCase()} · ${item.title}`}</title>
+              {item.impact === 'high' && <circle cx={x} cy={y} r="3.1" fill={IMPACT_COLOR.high} opacity="0.15" className="animate-ping" />}
+              <circle cx={x} cy={y} r={item.impact === 'high' ? '1.65' : item.impact === 'medium' ? '1.35' : '1.05'} fill={IMPACT_COLOR[item.impact]} stroke="#f8fafc" strokeWidth="0.35" className="cursor-pointer" />
+            </a>
+          ))}
+        </svg>
+        {!loading && markers.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-500">No mappable headlines</div>}
+      </div>
+      <div className="mt-1.5 flex items-center gap-3 text-[8px] font-mono uppercase text-slate-500">
+        <span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-rose-400" />High</span>
+        <span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-400" />Medium</span>
+        <span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-slate-400" />Low</span>
+        <span className="ml-auto text-slate-600">CLICK DOT</span>
+      </div>
+    </section>
+  );
 }
 
 export function ArthaNewsPanel() {
@@ -76,7 +135,7 @@ export function ArthaNewsPanel() {
   }
 
   return (
-    <aside className="flex w-88 shrink-0 flex-col border-l border-slate-800 bg-[#0b0f19]">
+    <aside className="flex w-96 shrink-0 flex-col border-l border-slate-800 bg-[#0b0f19]">
       <div className="flex h-10 items-center gap-2 border-b border-slate-800 bg-[#0f172a] px-2.5">
         <Globe2 className="h-3.5 w-3.5 text-sky-400" />
         <span className="flex-1 text-xs font-semibold text-slate-200">Global Intelligence</span>
@@ -90,6 +149,7 @@ export function ArthaNewsPanel() {
           <ChevronRight className="h-3.5 w-3.5" />
         </button>
       </div>
+      <GlobalNewsMap items={items.filter((item) => filter === 'all' || item.category === filter)} loading={loading} />
       <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800 bg-[#0d1322] px-2 py-1.5">
         {FILTERS.map((option) => (
           <button key={option.id} onClick={() => setFilter(option.id)}
